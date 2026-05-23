@@ -1,5 +1,6 @@
 .env
 .idea
 .DS_Store
+.gocache/
 client_secret*.json
 google_token*.json
