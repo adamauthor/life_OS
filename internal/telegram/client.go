@@ -82,6 +82,12 @@ func (c *Client) SendMessageWithButtons(_ context.Context, chatID int64, text st
 	message := tgbotapi.NewMessage(chatID, text)
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(buttons))
 	for _, button := range buttons {
+		if button.URL != "" {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonURL(button.Text, button.URL),
+			))
+			continue
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(button.Text, button.Data),
 		))
@@ -124,6 +130,7 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) (io.ReadCloser
 type InlineButton struct {
 	Text string
 	Data string
+	URL  string
 }
 
 func filenameFromURL(rawURL string) string {

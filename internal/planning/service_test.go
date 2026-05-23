@@ -72,14 +72,19 @@ func (fakePlanningPatterns) ListActive(_ context.Context, _ domain.UUID) ([]doma
 }
 
 type fakePlanningCalendar struct {
-	applied int
+	applied   int
+	available bool
 }
 
-func (c *fakePlanningCalendar) ListDay(_ context.Context, _ time.Time) ([]domain.CalendarEvent, error) {
+func (c *fakePlanningCalendar) IsAvailableForUser(_ context.Context, _ domain.UUID) bool {
+	return c.available
+}
+
+func (c *fakePlanningCalendar) ListDayForUser(_ context.Context, _ domain.UUID, _ time.Time) ([]domain.CalendarEvent, error) {
 	return []domain.CalendarEvent{{ID: "fixed", Title: "Call", IsFixed: true}}, nil
 }
 
-func (c *fakePlanningCalendar) ApplyCalendarActions(_ context.Context, actions []domain.ReplanCalendarAction) (string, error) {
+func (c *fakePlanningCalendar) ApplyCalendarActionsForUser(_ context.Context, _ domain.UUID, actions []domain.ReplanCalendarAction) (string, error) {
 	c.applied += len(actions)
 	return "ok", nil
 }
@@ -109,7 +114,7 @@ func (fakePlanningAI) BuildReplanProposal(_ context.Context, _ domain.ReplanProm
 
 func TestBuildReplanProposalDoesNotApplyCalendarBeforeConfirm(t *testing.T) {
 	repository := &fakePlanningRepository{}
-	calendar := &fakePlanningCalendar{}
+	calendar := &fakePlanningCalendar{available: true}
 	service := NewService(repository, fakePlanningContext{}, fakePlanningReviews{}, fakePlanningPatterns{}, calendar, fakePlanningAI{}, time.UTC)
 
 	proposal, err := service.BuildReplanProposal(context.Background(), uuid.New(), "проспал до 11:40", time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC))
@@ -134,5 +139,19 @@ func TestBuildReplanProposalDoesNotApplyCalendarBeforeConfirm(t *testing.T) {
 	}
 	if repository.proposal.Status != ProposalStatusApplied {
 		t.Fatalf("repository status = %q, want applied", repository.proposal.Status)
+	}
+}
+
+func TestBuildReplanProposalStripsCalendarActionsWhenCalendarUnavailable(t *testing.T) {
+	repository := &fakePlanningRepository{}
+	calendar := &fakePlanningCalendar{available: false}
+	service := NewService(repository, fakePlanningContext{}, fakePlanningReviews{}, fakePlanningPatterns{}, calendar, fakePlanningAI{}, time.UTC)
+
+	proposal, err := service.BuildReplanProposal(context.Background(), uuid.New(), "проспал до 11:40", time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildReplanProposal returned error: %v", err)
+	}
+	if len(proposal.CalendarActions) != 0 {
+		t.Fatalf("CalendarActions len = %d, want 0", len(proposal.CalendarActions))
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"life_os/internal/companion"
 	"life_os/internal/domain"
+	"life_os/internal/notifications"
 	"life_os/internal/patterns"
 	"life_os/internal/planning"
 	reviewsvc "life_os/internal/review"
@@ -32,14 +33,22 @@ type Bot struct {
 	logger         *slog.Logger
 	memories       *MemoryService
 	calendar       *CalendarService
+	calendarOAuth  CalendarConnector
 	reviews        *ReviewService
 	planning       *planning.Service
 	reviewV2       *reviewsvc.Service
 	patterns       *patterns.Service
 	companion      *companion.Service
+	notifications  *notifications.Service
 	ai             AIClient
 	timezone       *time.Location
 	pendingReviews map[int64]time.Time
+}
+
+type CalendarConnector interface {
+	BuildConnectURL(ctx context.Context, userID domain.UUID, chatID int64) (string, error)
+	StatusText(ctx context.Context, userID domain.UUID) (string, error)
+	Disconnect(ctx context.Context, userID domain.UUID) error
 }
 
 func NewBot(client TelegramClient, memories *MemoryService, calendar *CalendarService, reviews *ReviewService, ai AIClient, timezone *time.Location, logger *slog.Logger) *Bot {
@@ -63,6 +72,14 @@ func (b *Bot) ConfigureAdaptiveServices(planningService *planning.Service, revie
 	b.reviewV2 = reviewService
 	b.patterns = patternService
 	b.companion = companionService
+}
+
+func (b *Bot) ConfigureNotificationService(notificationService *notifications.Service) {
+	b.notifications = notificationService
+}
+
+func (b *Bot) ConfigureCalendarConnector(connector CalendarConnector) {
+	b.calendarOAuth = connector
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -92,6 +109,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update telegram.Update) {
 	}
 
 	msg := update.Message
+	b.registerTelegramUser(ctx, msg)
 	b.logger.Info(
 		"incoming telegram message",
 		"update_id", update.UpdateID,
@@ -110,9 +128,12 @@ func (b *Bot) handleUpdate(ctx context.Context, update telegram.Update) {
 		return
 	}
 
-	if response := b.routeText(ctx, msg); response != "" {
-		if err := b.client.SendMessage(ctx, chatID(msg), response); err != nil {
-			b.logger.Error("failed to send telegram message", "error", err, "chat_id", chatID(msg))
+	if isCommandText(msg.Text) {
+		response := b.routeText(ctx, msg)
+		if response != "" {
+			if err := b.client.SendMessage(ctx, chatID(msg), response); err != nil {
+				b.logger.Error("failed to send telegram message", "error", err, "chat_id", chatID(msg))
+			}
 		}
 		return
 	}
@@ -129,6 +150,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 
 	switch strings.Split(command[0], "@")[0] {
 	case "/start":
+		b.sendCalendarConnectPrompt(ctx, msg, false)
 		return startText()
 	case "/help":
 		return helpText()
@@ -151,6 +173,14 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 		return b.weekly(ctx, msg)
 	case "/patterns":
 		return b.listPatterns(ctx, msg)
+	case "/autonomy":
+		return b.handleAutonomyCommand(ctx, msg)
+	case "/connect_calendar":
+		return b.handleConnectCalendar(ctx, msg)
+	case "/calendar_status":
+		return b.handleCalendarStatus(ctx, msg)
+	case "/disconnect_calendar":
+		return b.handleDisconnectCalendar(ctx, msg)
 	case "/search":
 		query := strings.TrimSpace(strings.TrimPrefix(text, command[0]))
 		if query == "" {
@@ -165,8 +195,29 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 	}
 }
 
+func isCommandText(text string) bool {
+	fields := strings.Fields(text)
+	return len(fields) > 0 && strings.HasPrefix(fields[0], "/")
+}
+
 func (b *Bot) handleNaturalText(ctx context.Context, msg *telegram.Message) {
 	b.handleNaturalTextSource(ctx, msg, "telegram")
+}
+
+func (b *Bot) registerTelegramUser(ctx context.Context, msg *telegram.Message) {
+	if b.notifications == nil || msg == nil || msg.From == nil {
+		return
+	}
+	if _, err := b.notifications.RegisterTelegramUser(ctx, domain.RegisterTelegramUserInput{
+		TelegramUserID: msg.From.ID,
+		ChatID:         chatID(msg),
+		Username:       msg.From.UserName,
+		FirstName:      msg.From.FirstName,
+		LastName:       msg.From.LastName,
+		Timezone:       b.timezone.String(),
+	}); err != nil {
+		b.logger.Error("failed to register telegram user", "error", err, "telegram_user_id", msg.From.ID)
+	}
 }
 
 func (b *Bot) handleVoice(ctx context.Context, msg *telegram.Message) {
@@ -196,7 +247,7 @@ func (b *Bot) handleCalendarProposal(ctx context.Context, msg *telegram.Message,
 	action, err := b.calendar.ProposeEvent(ctx, domain.UserIDFromTelegram(userID(msg)), parsed)
 	if err != nil {
 		b.logger.Error("failed to propose calendar event", "error", err)
-		_ = b.client.SendMessage(ctx, chatID(msg), "Не смог подготовить событие. Укажи дату и время явно.")
+		_ = b.client.SendMessage(ctx, chatID(msg), calendarUserErrorText(err, "Не смог подготовить событие. Укажи дату и время явно."))
 		return
 	}
 	duration := parsed.DurationMinutes
@@ -225,6 +276,142 @@ func (b *Bot) handleMemoryQuestion(ctx context.Context, msg *telegram.Message, q
 		return
 	}
 	_ = b.client.SendMessage(ctx, chatID(msg), answer)
+}
+
+func (b *Bot) handleConnectCalendar(ctx context.Context, msg *telegram.Message) string {
+	if b.calendarOAuth == nil {
+		return "Подключение Google Calendar не настроено. Нужны GOOGLE_CREDENTIALS_JSON или GOOGLE_CREDENTIALS_FILE и GOOGLE_OAUTH_REDIRECT_URL."
+	}
+	if err := b.sendCalendarConnectPrompt(ctx, msg, true); err != nil {
+		b.logger.Error("failed to send calendar connect prompt", "error", err)
+		return "Не создал ссылку Google Calendar."
+	}
+	return ""
+}
+
+func (b *Bot) sendCalendarConnectPrompt(ctx context.Context, msg *telegram.Message, explicit bool) error {
+	if b.calendarOAuth == nil || msg == nil {
+		return nil
+	}
+	url, err := b.calendarOAuth.BuildConnectURL(ctx, domain.UserIDFromTelegram(userID(msg)), chatID(msg))
+	if err != nil {
+		return err
+	}
+	text := "Подключи Google Calendar, чтобы /today, /schedule и /replan учитывали твои события."
+	if explicit {
+		text = "Подключение Google Calendar.\nОткрой ссылку, выбери свой Google аккаунт и разреши доступ к календарю."
+	}
+	return b.client.SendMessageWithButtons(ctx, chatID(msg), text, []telegram.InlineButton{
+		{Text: "Подключить Google Calendar", URL: url},
+	})
+}
+
+func (b *Bot) handleCalendarStatus(ctx context.Context, msg *telegram.Message) string {
+	if b.calendarOAuth == nil {
+		return "Per-user Google Calendar OAuth не настроен."
+	}
+	text, err := b.calendarOAuth.StatusText(ctx, domain.UserIDFromTelegram(userID(msg)))
+	if err != nil {
+		b.logger.Error("failed to read calendar status", "error", err)
+		return "Не прочитал статус календаря."
+	}
+	return text
+}
+
+func (b *Bot) handleDisconnectCalendar(ctx context.Context, msg *telegram.Message) string {
+	if b.calendarOAuth == nil {
+		return "Per-user Google Calendar OAuth не настроен."
+	}
+	if err := b.calendarOAuth.Disconnect(ctx, domain.UserIDFromTelegram(userID(msg))); err != nil {
+		b.logger.Error("failed to disconnect calendar", "error", err)
+		return "Не отключил Google Calendar."
+	}
+	return "Google Calendar отключен для твоего аккаунта."
+}
+
+func (b *Bot) handleAutonomyCommand(ctx context.Context, msg *telegram.Message) string {
+	if b.notifications == nil {
+		return "Autonomy scheduler не настроен."
+	}
+	payload := strings.ToLower(strings.TrimSpace(commandPayload(msg.Text)))
+	userUUID := domain.UserIDFromTelegram(userID(msg))
+	fields := strings.Fields(payload)
+	if len(fields) > 0 {
+		switch fields[0] {
+		case "quiet":
+			if len(fields) != 3 {
+				return "Формат: /autonomy quiet 23:30 08:00"
+			}
+			if err := b.notifications.SetQuietHours(ctx, userUUID, fields[1], fields[2]); err != nil {
+				b.logger.Error("failed to update autonomy quiet hours", "error", err)
+				return "Не обновил quiet hours. Формат времени: HH:MM."
+			}
+			return "Quiet hours обновлены: " + fields[1] + "-" + fields[2]
+		case "limit":
+			if len(fields) != 2 {
+				return "Формат: /autonomy limit 5"
+			}
+			limit, err := strconv.Atoi(fields[1])
+			if err != nil {
+				return "Лимит должен быть числом: /autonomy limit 5"
+			}
+			if err := b.notifications.SetDailyLimit(ctx, userUUID, limit); err != nil {
+				b.logger.Error("failed to update autonomy daily limit", "error", err)
+				return "Не обновил лимит. Допустимо от 1 до 12 сообщений в день."
+			}
+			return fmt.Sprintf("Daily limit обновлен: %d", limit)
+		case "time":
+			if len(fields) != 3 {
+				return "Формат: /autonomy time daily_review 22:30"
+			}
+			kind, ok := notificationKindFromInput(fields[1])
+			if !ok {
+				return "Неизвестный тип. Доступно: daily_direction, midday_checkin, pattern_nudge, daily_review, shutdown, weekly_review."
+			}
+			if err := b.notifications.SetRuleTime(ctx, userUUID, kind, fields[2]); err != nil {
+				b.logger.Error("failed to update notification rule time", "error", err, "kind", kind)
+				return "Не обновил время. Формат времени: HH:MM."
+			}
+			return fmt.Sprintf("Время %s обновлено: %s", kind, fields[2])
+		}
+	}
+	switch payload {
+	case "on", "enable", "вкл":
+		if err := b.notifications.SetEnabled(ctx, userUUID, true); err != nil {
+			b.logger.Error("failed to enable autonomy", "error", err)
+			return "Не включил autonomy."
+		}
+		status, err := b.notifications.StatusText(ctx, userUUID)
+		if err != nil {
+			return "Autonomy включена."
+		}
+		return "Autonomy включена.\n\n" + status
+	case "off", "disable", "выкл":
+		if err := b.notifications.SetEnabled(ctx, userUUID, false); err != nil {
+			b.logger.Error("failed to disable autonomy", "error", err)
+			return "Не выключил autonomy."
+		}
+		return "Autonomy выключена. Бот не будет писать сам, пока не включишь /autonomy on."
+	case "", "status":
+		status, err := b.notifications.StatusText(ctx, userUUID)
+		if err != nil {
+			b.logger.Error("failed to read autonomy status", "error", err)
+			return "Не прочитал autonomy settings."
+		}
+		return status
+	default:
+		return strings.Join([]string{
+			"Команды autonomy:",
+			"/autonomy on - включить автономные напоминания",
+			"/autonomy off - выключить",
+			"/autonomy status - статус",
+			"/autonomy quiet 23:30 08:00 - не писать в тихие часы",
+			"/autonomy limit 5 - максимум сообщений в день",
+			"/autonomy time daily_review 22:30 - время конкретного напоминания",
+			"",
+			"Календарь сам не меняю. Только напоминания, check-ins и предложения.",
+		}, "\n")
+	}
 }
 
 func (b *Bot) handleReplan(ctx context.Context, msg *telegram.Message) {
@@ -274,10 +461,10 @@ func (b *Bot) handleReplan(ctx context.Context, msg *telegram.Message) {
 		return
 	}
 	var events []CalendarEvent
-	dayEvents, err := b.calendar.ListDay(ctx, time.Now().In(b.timezone))
+	dayEvents, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), time.Now().In(b.timezone))
 	if err != nil {
 		b.logger.Error("failed to list calendar events for replan", "error", err)
-		_ = b.client.SendMessage(ctx, chatID(msg), "Не смог прочитать календарь для перепланирования.")
+		_ = b.client.SendMessage(ctx, chatID(msg), calendarUserErrorText(err, "Не смог прочитать календарь для перепланирования."))
 		return
 	} else {
 		events = dayEvents
@@ -332,6 +519,10 @@ func (b *Bot) handleCallback(ctx context.Context, update telegram.Update) {
 	if callback == nil || callback.Message == nil {
 		return
 	}
+	if strings.HasPrefix(callback.Data, "notify_") {
+		b.handleNotificationCallback(ctx, callback)
+		return
+	}
 	if strings.HasPrefix(callback.Data, "replan_") {
 		b.handleReplanCallback(ctx, callback)
 		return
@@ -372,6 +563,63 @@ func (b *Bot) handleCallback(ctx context.Context, update telegram.Update) {
 	case "edit":
 		_ = b.client.AnswerCallback(ctx, callback.ID, "Изменить")
 		_ = b.client.SendMessage(ctx, chatID, "Напиши исправленное событие одним сообщением: что, когда, длительность.")
+	}
+}
+
+func (b *Bot) handleNotificationCallback(ctx context.Context, callback *telegram.CallbackQuery) {
+	if b.notifications == nil {
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Autonomy не настроена")
+		return
+	}
+	action, notificationID, err := parseNotificationCallback(callback.Data)
+	if err != nil {
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Некорректное действие")
+		return
+	}
+	userUUID := domain.UserIDFromTelegram(callbackUserID(callback))
+	chatID := callbackChatID(callback)
+
+	switch action {
+	case "done":
+		err = b.notifications.MarkDone(ctx, userUUID, notificationID)
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Отмечено")
+	case "skip":
+		err = b.notifications.MarkSkipped(ctx, userUUID, notificationID)
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Пропущено")
+	case "snooze30":
+		err = b.notifications.Snooze(ctx, userUUID, notificationID, 30*time.Minute)
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Отложено на 30 минут")
+	case "snooze120":
+		err = b.notifications.Snooze(ctx, userUUID, notificationID, 2*time.Hour)
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Отложено на 2 часа")
+	case "review":
+		err = b.notifications.MarkDone(ctx, userUUID, notificationID)
+		if err == nil {
+			b.pendingReviews[callbackUserID(callback)] = time.Now().In(b.timezone)
+			_ = b.client.SendMessage(ctx, chatID, dailyReviewQuestions())
+		}
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Review")
+	case "replan":
+		proposal, buildErr := b.notifications.BuildReplanFromNotification(ctx, userUUID, notificationID)
+		if buildErr != nil {
+			err = buildErr
+			_ = b.client.AnswerCallback(ctx, callback.ID, "Ошибка")
+			break
+		}
+		text := formatAdaptiveReplanProposal(*proposal)
+		err = b.client.SendMessageWithButtons(ctx, chatID, text+"\n\nПрименить изменения в календаре?", []telegram.InlineButton{
+			{Text: "Применить", Data: fmt.Sprintf("replan_confirm:%s", proposal.ID.String())},
+			{Text: "Изменить", Data: fmt.Sprintf("replan_edit:%s", proposal.ID.String())},
+			{Text: "Отклонить", Data: fmt.Sprintf("replan_cancel:%s", proposal.ID.String())},
+		})
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Replan готов")
+	default:
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Неизвестное действие")
+		return
+	}
+	if err != nil {
+		b.logger.Error("failed to handle notification callback", "error", err, "action", action, "notification_id", notificationID.String())
+		_ = b.client.SendMessage(ctx, chatID, "Не применил действие: "+err.Error())
 	}
 }
 
@@ -420,10 +668,10 @@ func (b *Bot) schedule(ctx context.Context, msg *telegram.Message) string {
 	if b.calendar == nil {
 		return "Календарь не настроен."
 	}
-	events, err := b.calendar.ListDay(ctx, time.Now().In(b.timezone))
+	events, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), time.Now().In(b.timezone))
 	if err != nil {
 		b.logger.Error("failed to list today calendar", "error", err)
-		return "Не смог прочитать календарь. Проверь GOOGLE_CALENDAR_ID: для основного календаря используй primary."
+		return calendarUserErrorText(err, "Не смог прочитать календарь. Проверь GOOGLE_CALENDAR_ID: для основного календаря используй primary.")
 	}
 	if len(events) == 0 {
 		return "На сегодня событий нет."
@@ -572,6 +820,10 @@ func helpText() string {
 		"/review - daily review",
 		"/weekly - weekly review",
 		"/patterns - active behavioral patterns",
+		"/autonomy - автономные напоминания",
+		"/connect_calendar - подключить Google Calendar",
+		"/calendar_status - статус календаря",
+		"/disconnect_calendar - отключить Google Calendar",
 		"/search <вопрос> - поиск по памяти",
 		"/settings - настройки профиля",
 		"",
@@ -600,6 +852,8 @@ func startText() string {
 		"/review - daily review",
 		"/weekly - weekly review",
 		"/patterns - behavioral patterns",
+		"/autonomy on - включить автономные напоминания",
+		"/connect_calendar - подключить личный Google Calendar",
 		"/search <вопрос> - поиск по памяти",
 		"/settings - настройки",
 		"",
@@ -744,6 +998,38 @@ func commandPayload(text string) string {
 	return strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
 }
 
+func parseNotificationCallback(data string) (string, uuid.UUID, error) {
+	parts := strings.SplitN(data, ":", 2)
+	if len(parts) != 2 {
+		return "", uuid.Nil, fmt.Errorf("invalid notification callback")
+	}
+	action := strings.TrimPrefix(parts[0], "notify_")
+	id, err := uuid.Parse(parts[1])
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	return action, id, nil
+}
+
+func notificationKindFromInput(value string) (domain.NotificationKind, bool) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "daily_direction", "direction", "today", "morning":
+		return domain.NotificationKindDailyDirection, true
+	case "midday_checkin", "midday", "checkin":
+		return domain.NotificationKindMiddayCheckin, true
+	case "pattern_nudge", "pattern", "nudge":
+		return domain.NotificationKindPatternNudge, true
+	case "daily_review", "review":
+		return domain.NotificationKindDailyReview, true
+	case "shutdown", "sleep":
+		return domain.NotificationKindShutdown, true
+	case "weekly_review", "weekly":
+		return domain.NotificationKindWeeklyReview, true
+	default:
+		return "", false
+	}
+}
+
 func firstPlanStep(plan domain.ProposedPlan) string {
 	for _, block := range plan.Blocks {
 		if strings.TrimSpace(block.Title) != "" {
@@ -760,6 +1046,20 @@ func startOfWeek(value time.Time) time.Time {
 	}
 	start := value.AddDate(0, 0, -(weekday - 1))
 	return time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+}
+
+func calendarUserErrorText(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	message := err.Error()
+	if strings.Contains(message, "calendar is not connected for this user") {
+		return "Календарь для твоего аккаунта пока не подключен. Подключи: /connect_calendar. Остальные функции работают: память, review, patterns, /today и /replan без записи в календарь."
+	}
+	if strings.Contains(message, "calendar adapter is not configured") {
+		return "Календарь не настроен. Остальные функции работают без календарных действий."
+	}
+	return fallback
 }
 
 func userID(message *telegram.Message) int64 {

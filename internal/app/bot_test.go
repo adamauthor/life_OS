@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
 	"life_os/internal/domain"
 	"life_os/internal/telegram"
 )
@@ -104,6 +106,20 @@ func (voiceFirstAI) ReplanDay(_ context.Context, _ string, _ []CalendarEvent) (R
 	}, nil
 }
 
+type fakeCalendarConnector struct{}
+
+func (fakeCalendarConnector) BuildConnectURL(_ context.Context, _ domain.UUID, _ int64) (string, error) {
+	return "https://example.com/oauth", nil
+}
+
+func (fakeCalendarConnector) StatusText(_ context.Context, _ domain.UUID) (string, error) {
+	return "Google Calendar подключен.", nil
+}
+
+func (fakeCalendarConnector) Disconnect(_ context.Context, _ domain.UUID) error {
+	return nil
+}
+
 func TestRouteTextCommands(t *testing.T) {
 	bot := NewBot(noopTelegramClient{}, nil, nil, nil, nil, time.UTC, slog.Default())
 
@@ -166,5 +182,27 @@ func TestRouteTextNonCommand(t *testing.T) {
 
 	if got := bot.routeText(context.Background(), &telegram.Message{Text: "идея: AI Life OS"}); got != "" {
 		t.Fatalf("routeText returned %q, want empty response for non-command text", got)
+	}
+}
+
+func TestConnectCalendarCommandSendsURLButton(t *testing.T) {
+	telegramClient := &recordingTelegramClient{}
+	bot := NewBot(telegramClient, nil, nil, nil, nil, time.UTC, slog.Default())
+	bot.ConfigureCalendarConnector(fakeCalendarConnector{})
+
+	response := bot.routeText(context.Background(), &telegram.Message{
+		Text: "/connect_calendar",
+		Chat: &telegram.Chat{ID: 123},
+		From: &tgbotapi.User{ID: 456},
+	})
+	if response != "" {
+		t.Fatalf("response = %q, want empty because command sends button directly", response)
+	}
+	if len(telegramClient.buttonMessages) != 1 {
+		t.Fatalf("buttonMessages len = %d, want 1", len(telegramClient.buttonMessages))
+	}
+	buttons := telegramClient.buttonMessages[0].buttons
+	if len(buttons) != 1 || buttons[0].URL != "https://example.com/oauth" {
+		t.Fatalf("buttons = %#v, want oauth URL button", buttons)
 	}
 }

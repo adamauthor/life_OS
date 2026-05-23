@@ -24,13 +24,17 @@ Runbook: `docs/runbook.md`.
 BotFather setup: `docs/botfather.md`.
 Roadmap and risks: `docs/roadmap-and-risks.md`.
 
-Google Calendar is enabled when both files are configured:
+Google Calendar per-user OAuth is enabled when credentials and redirect URL are configured:
 
 ```sh
 GOOGLE_CREDENTIALS_FILE=/absolute/path/oauth-client.json
-GOOGLE_TOKEN_FILE=/absolute/path/token.json
 GOOGLE_CALENDAR_ID=primary
+GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
+CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
+HTTP_ADDR=:8080
 ```
+
+Each Telegram user connects their own calendar with `/connect_calendar`. The older global-token mode still exists for local/private fallback, but requires `CALENDAR_OWNER_TELEGRAM_ID` so a public bot cannot read or write one owner's calendar for every Telegram user.
 
 For Fly.io deployment, see `docs/deploy-fly.md`.
 
@@ -48,13 +52,7 @@ go run ./cmd/migrate version
 
 The Docker image includes `life-os-migrate`; Fly runs `./life-os-migrate up` as `release_command`.
 
-Generate the token file once:
-
-```sh
-GOOGLE_CREDENTIALS_FILE=client_secret_google_calendar.json \
-GOOGLE_TOKEN_FILE=google_token_calendar.json \
-go run ./cmd/google-auth
-```
+Per-user Google Calendar OAuth uses `/connect_calendar`; no shared token file is required.
 
 ## Tests
 
@@ -85,6 +83,7 @@ MVP milestones 1-9 are implemented as one modular monolith:
 - `/search` performs semantic search over memory and answers with context.
 - Daily review text is summarized, saved to `daily_reviews`, and stored in memory as a `reflection`.
 - Memories, reviews, patterns, proposals, and calendar action approvals are scoped by Telegram user.
+- `/autonomy on` enables proactive reminders with done/snooze/skip callbacks.
 
 ## Architecture
 

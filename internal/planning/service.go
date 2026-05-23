@@ -41,8 +41,9 @@ type PatternProvider interface {
 }
 
 type Calendar interface {
-	ListDay(ctx context.Context, day time.Time) ([]domain.CalendarEvent, error)
-	ApplyCalendarActions(ctx context.Context, actions []domain.ReplanCalendarAction) (string, error)
+	IsAvailableForUser(ctx context.Context, userID domain.UUID) bool
+	ListDayForUser(ctx context.Context, userID domain.UUID, day time.Time) ([]domain.CalendarEvent, error)
+	ApplyCalendarActionsForUser(ctx context.Context, userID domain.UUID, actions []domain.ReplanCalendarAction) (string, error)
 }
 
 type AIClient interface {
@@ -159,7 +160,7 @@ func (s *Service) BuildReplanProposal(ctx context.Context, userID domain.UUID, i
 		Status:           ProposalStatusPending,
 		Reason:           response.Reason,
 		ProposedPlan:     response.Plan,
-		CalendarActions:  normalizeCalendarActions(response.CalendarActions),
+		CalendarActions:  s.normalizeCalendarActionsForUser(ctx, userID, response.CalendarActions),
 		AuthorityMessage: response.AuthorityMessage,
 		RiskDetected:     response.RiskDetected,
 	}
@@ -192,7 +193,7 @@ func (s *Service) confirmReplan(ctx context.Context, userID domain.UUID, proposa
 		return err
 	}
 	if s.calendar != nil {
-		if _, err := s.calendar.ApplyCalendarActions(ctx, proposal.CalendarActions); err != nil {
+		if _, err := s.calendar.ApplyCalendarActionsForUser(ctx, proposal.UserID, proposal.CalendarActions); err != nil {
 			_ = s.updateReplanProposalStatus(ctx, userID, proposalID, ProposalStatusFailed, &now)
 			return fmt.Errorf("apply calendar actions: %w", err)
 		}
@@ -262,14 +263,17 @@ func (s *Service) loadContext(ctx context.Context, userID domain.UUID, date time
 		}
 	}
 	if s.calendar != nil {
-		if events, err := s.calendar.ListDay(ctx, date); err == nil {
+		if events, err := s.calendar.ListDayForUser(ctx, userID, date); err == nil {
 			data.events = events
 		}
 	}
 	return data
 }
 
-func normalizeCalendarActions(actions []domain.ReplanCalendarAction) []domain.ReplanCalendarAction {
+func (s *Service) normalizeCalendarActionsForUser(ctx context.Context, userID domain.UUID, actions []domain.ReplanCalendarAction) []domain.ReplanCalendarAction {
+	if s.calendar == nil || !s.calendar.IsAvailableForUser(ctx, userID) {
+		return nil
+	}
 	normalized := make([]domain.ReplanCalendarAction, 0, len(actions))
 	for _, action := range actions {
 		action.Action = strings.ToLower(strings.TrimSpace(action.Action))

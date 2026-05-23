@@ -36,7 +36,7 @@ type PatternService interface {
 }
 
 type CalendarReader interface {
-	ListDay(ctx context.Context, day time.Time) ([]domain.CalendarEvent, error)
+	ListDayForUser(ctx context.Context, userID domain.UUID, day time.Time) ([]domain.CalendarEvent, error)
 }
 
 type Service struct {
@@ -166,7 +166,7 @@ func (s *Service) BuildWeeklyReview(ctx context.Context, userID domain.UUID, wee
 	}
 	if s.calendar != nil {
 		for day := weekStart; day.Before(weekEnd); day = day.AddDate(0, 0, 1) {
-			dayEvents, err := s.calendar.ListDay(ctx, day)
+			dayEvents, err := s.calendar.ListDayForUser(ctx, userID, day)
 			if err == nil {
 				events = append(events, dayEvents...)
 			}

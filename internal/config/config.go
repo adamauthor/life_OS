@@ -3,35 +3,48 @@ package config
 import (
 	"errors"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	DatabaseURL           string
-	GoogleCalendarID      string
-	GoogleCredentialsFile string
-	GoogleCredentialsJSON string
-	GoogleTokenFile       string
-	GoogleTokenJSON       string
-	OpenAIAPIKey          string
-	TelegramBotToken      string
-	Timezone              string
+	DatabaseURL                string
+	GoogleCalendarID           string
+	GoogleCredentialsFile      string
+	GoogleCredentialsJSON      string
+	GoogleTokenFile            string
+	GoogleTokenJSON            string
+	CalendarOwnerTelegramID    int64
+	GoogleOAuthRedirectURL     string
+	CalendarTokenEncryptionKey string
+	HTTPAddr                   string
+	OpenAIAPIKey               string
+	TelegramBotToken           string
+	Timezone                   string
+	AutonomyScheduler          bool
+	AutonomyDefaultOn          bool
 }
 
 func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		DatabaseURL:           os.Getenv("DATABASE_URL"),
-		GoogleCalendarID:      getenv("GOOGLE_CALENDAR_ID", "primary"),
-		GoogleCredentialsFile: os.Getenv("GOOGLE_CREDENTIALS_FILE"),
-		GoogleCredentialsJSON: os.Getenv("GOOGLE_CREDENTIALS_JSON"),
-		GoogleTokenFile:       os.Getenv("GOOGLE_TOKEN_FILE"),
-		GoogleTokenJSON:       os.Getenv("GOOGLE_TOKEN_JSON"),
-		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
-		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
-		Timezone:              getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh"),
+		DatabaseURL:                os.Getenv("DATABASE_URL"),
+		GoogleCalendarID:           getenv("GOOGLE_CALENDAR_ID", "primary"),
+		GoogleCredentialsFile:      os.Getenv("GOOGLE_CREDENTIALS_FILE"),
+		GoogleCredentialsJSON:      os.Getenv("GOOGLE_CREDENTIALS_JSON"),
+		GoogleTokenFile:            os.Getenv("GOOGLE_TOKEN_FILE"),
+		GoogleTokenJSON:            os.Getenv("GOOGLE_TOKEN_JSON"),
+		CalendarOwnerTelegramID:    getenvInt64("CALENDAR_OWNER_TELEGRAM_ID", 0),
+		GoogleOAuthRedirectURL:     getenv("GOOGLE_OAUTH_REDIRECT_URL", os.Getenv("GOOGLE_REDIRECT_URL")),
+		CalendarTokenEncryptionKey: os.Getenv("CALENDAR_TOKEN_ENCRYPTION_KEY"),
+		HTTPAddr:                   getenv("HTTP_ADDR", ":8080"),
+		OpenAIAPIKey:               os.Getenv("OPENAI_API_KEY"),
+		TelegramBotToken:           os.Getenv("TELEGRAM_BOT_TOKEN"),
+		Timezone:                   getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh"),
+		AutonomyScheduler:          getenvBool("AUTONOMY_SCHEDULER_ENABLED", true),
+		AutonomyDefaultOn:          getenvBool("AUTONOMY_DEFAULT_ENABLED", false),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -52,4 +65,28 @@ func getenv(key string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getenvInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getenvBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

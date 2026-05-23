@@ -41,9 +41,36 @@ Optional Google Calendar:
 
 - `GOOGLE_CALENDAR_ID`: usually `primary`.
 - `GOOGLE_CREDENTIALS_FILE`: Google OAuth client JSON.
-- `GOOGLE_TOKEN_FILE`: existing OAuth token JSON.
+- `GOOGLE_OAUTH_REDIRECT_URL`: OAuth callback URL.
+- `CALENDAR_TOKEN_ENCRYPTION_KEY`: secret for encrypting stored OAuth tokens.
+- `HTTP_ADDR`: callback listener, usually `:8080`.
 
-If Google Calendar is not configured, memory, voice transcription, search, and review can still work, but calendar actions will say that calendar is not configured.
+If Google Calendar is not configured, memory, voice transcription, search, review, patterns, `/today`, `/weekly`, and `/replan` can still work. With Google OAuth configured, each user connects their own calendar:
+
+```text
+/connect_calendar
+/calendar_status
+/disconnect_calendar
+```
+
+## Autonomy
+
+Autonomy is opt-in:
+
+```text
+/autonomy on
+```
+
+Useful settings:
+
+```text
+/autonomy quiet 23:30 08:00
+/autonomy limit 5
+/autonomy time daily_review 22:30
+/autonomy status
+```
+
+The bot can send reminders, check-ins, review prompts, and replan proposals. It still cannot write to the calendar without inline confirmation.
 
 ## Main Rule
 
@@ -264,7 +291,7 @@ Evening:
 
 `Календарь не настроен.`
 
-Google Calendar OAuth files are not configured. Set `GOOGLE_CREDENTIALS_FILE` and `GOOGLE_TOKEN_FILE`.
+Google Calendar OAuth is not configured or your account is not connected. Set `GOOGLE_CREDENTIALS_FILE` plus `GOOGLE_OAUTH_REDIRECT_URL`, then send `/connect_calendar`.
 
 `Не распознал голос. Повтори текстом.`
 

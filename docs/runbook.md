@@ -17,12 +17,63 @@ Safe per-user data:
 - daily directions;
 - replan proposals;
 - pending calendar action ownership.
+- Google Calendar OAuth connections.
 
 Current limitation:
 
-- Google Calendar OAuth is still global for the whole bot instance.
-- If calendar is configured, confirmed calendar actions write to the single configured calendar.
-- For real public multi-user calendar support, add per-user Google OAuth token storage and a user calendar settings flow.
+- Per-user Google Calendar OAuth is implemented through `/connect_calendar`.
+- Tokens are stored in Postgres in `user_integrations`; set `CALENDAR_TOKEN_ENCRYPTION_KEY` so stored OAuth tokens are encrypted.
+- The older global Google token fallback is still available only for `CALENDAR_OWNER_TELEGRAM_ID`.
+
+## Autonomy
+
+Autonomy is opt-in per Telegram user.
+
+Enable:
+
+```text
+/autonomy on
+```
+
+Disable:
+
+```text
+/autonomy off
+```
+
+Check status:
+
+```text
+/autonomy status
+```
+
+Tune schedule:
+
+```text
+/autonomy quiet 23:30 08:00
+/autonomy limit 5
+/autonomy time daily_review 22:30
+```
+
+Autonomy v1 sends:
+
+- morning daily direction;
+- midday check-in;
+- pattern-based nudge;
+- daily review reminder;
+- shutdown reminder;
+- weekly review.
+
+Each proactive notification has action buttons:
+
+- `Сделал`;
+- `Отложить 30м`;
+- `Отложить 2ч`;
+- `Пропустить`.
+
+Daily review reminders have `Ответить`. Midday check-ins can trigger a replan proposal.
+
+Important: autonomy can send messages and propose replans, but it does not apply calendar writes. Calendar changes still require explicit callback confirmation.
 
 ## Local Setup
 
@@ -47,6 +98,9 @@ OPENAI_API_KEY=sk-proj-...
 TELEGRAM_BOT_TOKEN=123:abc
 APP_TIMEZONE=Asia/Ho_Chi_Minh
 GOOGLE_CALENDAR_ID=primary
+GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
+CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
+HTTP_ADDR=:8080
 ```
 
 Start Postgres:
@@ -83,20 +137,32 @@ go run ./cmd/bot
 
 Calendar is optional. Without it, memory, voice, review, patterns, `/today`, and replan proposal generation still work, but calendar reads/writes will be limited.
 
-Create OAuth token file:
+Use a Google OAuth client configured with this authorized redirect URI:
 
-```sh
-GOOGLE_CREDENTIALS_FILE=client_secret_google_calendar.json \
-GOOGLE_TOKEN_FILE=google_token_calendar.json \
-go run ./cmd/google-auth
+```text
+http://localhost:8080/oauth/google/callback
 ```
 
-Then set in `.env`:
+Set:
 
 ```sh
 GOOGLE_CREDENTIALS_FILE=/absolute/path/client_secret_google_calendar.json
-GOOGLE_TOKEN_FILE=/absolute/path/google_token_calendar.json
-GOOGLE_CALENDAR_ID=primary
+GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
+CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
+HTTP_ADDR=:8080
+```
+
+Start the bot and connect inside Telegram:
+
+```text
+/connect_calendar
+```
+
+Each user gets their own OAuth link and token. Calendar status:
+
+```text
+/calendar_status
+/disconnect_calendar
 ```
 
 ## Fly.io Setup
@@ -132,8 +198,9 @@ In Telegram:
 4. Send `/review`, then answer the review questions.
 5. Send `/patterns`.
 6. Send `/today`.
-7. Send: `я проспал до 11:40, перестрой день`.
-8. Confirm only if calendar action looks correct.
+7. Send `/autonomy on`.
+8. Send: `я проспал до 11:40, перестрой день`.
+9. Confirm only if calendar action looks correct.
 
 ## Operational Commands
 
@@ -173,9 +240,8 @@ Set `.env` locally or attach Fly Postgres so Fly creates the `DATABASE_URL` secr
 
 `Календарь не настроен.`
 
-Google Calendar env vars are missing or invalid. Use file vars locally and JSON vars on Fly.
+Google Calendar env vars are missing or invalid. For per-user OAuth, set Google credentials and `GOOGLE_OAUTH_REDIRECT_URL`, then run `/connect_calendar`.
 
 `Не распознал голос.`
 
 OpenAI audio transcription failed. Check `OPENAI_API_KEY`, network, and logs.
-

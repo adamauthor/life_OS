@@ -1,6 +1,10 @@
 # Deploy to Fly.io
 
-This project deploys as a worker-style Telegram bot. It does not expose an HTTP service.
+This project runs Telegram long polling and exposes one small HTTP callback endpoint for Google OAuth:
+
+```text
+/oauth/google/callback
+```
 
 Sources:
 - Fly deploy from GitHub Actions: https://fly.io/docs/blueprints/deploy-with-github-actions/
@@ -82,9 +86,18 @@ Optional Google Calendar via JSON secrets:
 ```sh
 fly secrets set --app your-life-os-bot \
   GOOGLE_CREDENTIALS_JSON="$(cat client_secret_google_calendar.json)" \
-  GOOGLE_TOKEN_JSON="$(cat google_token_calendar.json)" \
-  GOOGLE_CALENDAR_ID='primary'
+  GOOGLE_CALENDAR_ID='primary' \
+  GOOGLE_OAUTH_REDIRECT_URL='https://your-life-os-bot.fly.dev/oauth/google/callback' \
+  CALENDAR_TOKEN_ENCRYPTION_KEY='paste-a-long-random-secret-here'
 ```
+
+In Google Cloud Console, add the same authorized redirect URI:
+
+```text
+https://your-life-os-bot.fly.dev/oauth/google/callback
+```
+
+After deploy, each Telegram user connects their own calendar with `/connect_calendar`.
 
 Local file env vars like `GOOGLE_CREDENTIALS_FILE` are for local development. On Fly use JSON secrets.
 

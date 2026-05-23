@@ -44,6 +44,10 @@ replan - Rebuild the day with confirmation
 review - Start daily review
 weekly - Review the last 7 days
 patterns - Show active behavioral patterns
+autonomy - Configure proactive reminders
+connect_calendar - Connect Google Calendar
+calendar_status - Show calendar connection status
+disconnect_calendar - Disconnect Google Calendar
 search - Search personal memory
 schedule - Show calendar events
 capture - Save a thought or note
@@ -129,4 +133,3 @@ Adaptive Life OS is a Telegram companion for memory, reviews, behavioral pattern
 
 Send text or voice. It can propose calendar actions, but it never changes your calendar without confirmation.
 ```
-

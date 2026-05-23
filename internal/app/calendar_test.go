@@ -89,3 +89,26 @@ func TestConfirmReplanSkipsFixedAndAppliesChanges(t *testing.T) {
 		t.Fatalf("status = %q, want applied", repository.actions[action.ID].Status)
 	}
 }
+
+func TestRestrictedCalendarBlocksOtherUsers(t *testing.T) {
+	repository := newFakeCalendarRepository()
+	calendar := &fakeCalendarClient{}
+	service := NewCalendarService(repository, calendar)
+	service.RestrictToUser(domain.UserIDFromTelegram(1))
+
+	otherUser := domain.UserIDFromTelegram(2)
+	_, err := service.ProposeEvent(context.Background(), otherUser, domain.ParsedIntent{
+		Title:           "Deep work",
+		Datetime:        "2026-05-23T15:00:00+07:00",
+		DurationMinutes: 60,
+	})
+	if err == nil {
+		t.Fatal("ProposeEvent returned nil error for non-owner")
+	}
+	if len(repository.actions) != 0 {
+		t.Fatalf("actions len = %d, want 0", len(repository.actions))
+	}
+	if service.IsAvailableForUser(context.Background(), otherUser) {
+		t.Fatal("calendar should not be available for non-owner")
+	}
+}

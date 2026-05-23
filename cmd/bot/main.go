@@ -14,6 +14,8 @@ import (
 	"life_os/internal/calendar"
 	"life_os/internal/companion"
 	"life_os/internal/config"
+	"life_os/internal/domain"
+	"life_os/internal/notifications"
 	"life_os/internal/patterns"
 	"life_os/internal/planning"
 	reviewsvc "life_os/internal/review"
@@ -69,7 +71,36 @@ func main() {
 			calendarClient = googleCalendar
 		}
 	}
+	if calendarClient != nil && cfg.CalendarOwnerTelegramID == 0 {
+		logger.Warn("google calendar disabled: set CALENDAR_OWNER_TELEGRAM_ID to avoid exposing one calendar to every Telegram user")
+		calendarClient = nil
+	}
 	calendarService := app.NewCalendarService(calendarRepository, calendarClient)
+	if cfg.CalendarOwnerTelegramID != 0 {
+		calendarService.RestrictToUser(domain.UserIDFromTelegram(cfg.CalendarOwnerTelegramID))
+	}
+	var calendarOAuth *calendar.OAuthService
+	googleCredentialsJSON := cfg.GoogleCredentialsJSON
+	if googleCredentialsJSON == "" && cfg.GoogleCredentialsFile != "" {
+		credentials, err := os.ReadFile(cfg.GoogleCredentialsFile)
+		if err != nil {
+			logger.Warn("google calendar oauth disabled: failed to read credentials file", "error", err)
+		} else {
+			googleCredentialsJSON = string(credentials)
+		}
+	}
+	if googleCredentialsJSON != "" && cfg.GoogleOAuthRedirectURL != "" {
+		googleCalendarRepository := storage.NewGoogleCalendarRepository(postgres.Pool)
+		service, err := calendar.NewOAuthService(googleCalendarRepository, googleCredentialsJSON, cfg.GoogleOAuthRedirectURL, cfg.GoogleCalendarID, cfg.CalendarTokenEncryptionKey)
+		if err != nil {
+			logger.Warn("google calendar oauth disabled", "error", err)
+		} else {
+			calendarOAuth = service
+			calendarService.ConfigureProvider(service)
+		}
+	} else if googleCredentialsJSON != "" {
+		logger.Warn("google calendar oauth disabled: GOOGLE_OAUTH_REDIRECT_URL is not set")
+	}
 
 	reviewRepository := storage.NewDailyReviewRepository(postgres.Pool)
 	reviewService := app.NewReviewService(reviewRepository, memoryRepository, openAIClient)
@@ -85,9 +116,35 @@ func main() {
 	companionService := companion.NewService(patternService)
 	adaptiveReviewService := reviewsvc.NewService(reviewRepository, adaptiveRepository, memoryRepository, openAIClient, patternService, calendarService, location)
 	planningService := planning.NewService(adaptiveRepository, adaptiveRepository, reviewRepository, patternService, calendarService, openAIClient, location)
+	notificationRepository := storage.NewNotificationRepository(postgres.Pool)
+	notificationService := notifications.NewService(
+		notificationRepository,
+		client,
+		planningService,
+		adaptiveReviewService,
+		patternService,
+		location,
+		logger,
+		notifications.Config{
+			SchedulerEnabled: cfg.AutonomyScheduler,
+			DefaultEnabled:   cfg.AutonomyDefaultOn,
+		},
+	)
 
 	bot := app.NewBot(client, memoryService, calendarService, reviewService, openAIClient, location, logger)
 	bot.ConfigureAdaptiveServices(planningService, adaptiveReviewService, patternService, companionService)
+	bot.ConfigureNotificationService(notificationService)
+	bot.ConfigureCalendarConnector(calendarOAuth)
+
+	go notificationService.Run(ctx)
+	if calendarOAuth != nil {
+		oauthServer := calendar.NewOAuthHTTPServer(cfg.HTTPAddr, calendarOAuth, client, logger)
+		go func() {
+			if err := oauthServer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("google oauth server stopped with error", "error", err)
+			}
+		}()
+	}
 
 	if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("bot stopped with error", "error", err)
