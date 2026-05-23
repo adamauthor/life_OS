@@ -77,7 +77,11 @@ func NewService(repository Repository, contexts ContextRepository, reviews Revie
 }
 
 func (s *Service) BuildDailyDirection(ctx context.Context, userID domain.UUID, date time.Time) (*domain.DailyDirection, error) {
-	date = startOfDay(date.In(s.timezone))
+	loc := date.Location()
+	if loc == nil {
+		loc = s.timezone
+	}
+	date = startOfDay(date.In(loc))
 	contextData := s.loadContext(ctx, userID, date, "today")
 
 	input := domain.DailyDirectionPromptInput{
@@ -89,8 +93,8 @@ func (s *Service) BuildDailyDirection(ctx context.Context, userID domain.UUID, d
 		Reviews:  contextData.reviews,
 		Patterns: contextData.patterns,
 		Events:   contextData.events,
-		Timezone: s.timezone.String(),
-		Now:      time.Now().In(s.timezone),
+		Timezone: loc.String(),
+		Now:      time.Now().In(loc),
 	}
 
 	var direction domain.DailyDirection
@@ -119,7 +123,11 @@ func (s *Service) BuildDailyDirection(ctx context.Context, userID domain.UUID, d
 }
 
 func (s *Service) BuildReplanProposal(ctx context.Context, userID domain.UUID, inputText string, date time.Time) (*domain.ReplanProposal, error) {
-	date = startOfDay(date.In(s.timezone))
+	loc := date.Location()
+	if loc == nil {
+		loc = s.timezone
+	}
+	date = startOfDay(date.In(loc))
 	contextData := s.loadContext(ctx, userID, date, inputText)
 
 	input := domain.ReplanPromptInput{
@@ -131,8 +139,8 @@ func (s *Service) BuildReplanProposal(ctx context.Context, userID domain.UUID, i
 		Patterns:    contextData.patterns,
 		Events:      contextData.events,
 		UserMessage: strings.TrimSpace(inputText),
-		CurrentTime: time.Now().In(s.timezone),
-		Timezone:    s.timezone.String(),
+		CurrentTime: time.Now().In(loc),
+		Timezone:    loc.String(),
 	}
 
 	var response domain.ReplanAIResponse

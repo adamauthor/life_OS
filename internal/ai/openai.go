@@ -55,6 +55,9 @@ Use weekly_review when the user asks to summarize or review the last week.
 Use habit_log when the user reports a measurable habit completion.
 For calendar writes, requires_confirmation must be true.
 For calendar events, include title, datetime in RFC3339 with timezone, duration_minutes.
+For relative dates and times, resolve them from Current time and Timezone.
+Never leave datetime empty for create_calendar_event when the message contains a relative or explicit time expression.
+If there is not enough date/time information for a calendar event, return unknown instead of create_calendar_event.
 For memory capture, include summary and tags.
 
 Examples:
@@ -83,8 +86,63 @@ User message:
 	}
 	if parsed.Intent == domain.IntentCreateCalendarEvent {
 		parsed.RequiresConfirmation = true
+		repaired, err := c.repairCalendarIntent(ctx, text, parsed, nowRFC3339, timezone)
+		if err == nil {
+			parsed = repaired
+		}
 	}
 	return parsed, nil
+}
+
+func (c *Client) repairCalendarIntent(ctx context.Context, text string, parsed domain.ParsedIntent, nowRFC3339 string, timezone string) (domain.ParsedIntent, error) {
+	if !calendarIntentNeedsRepair(parsed) {
+		return parsed, nil
+	}
+
+	payload, _ := json.Marshal(parsed)
+	prompt := fmt.Sprintf(`Return strict JSON only.
+Repair this calendar intent using the user's local time.
+
+Rules:
+- Current local time is %s.
+- Timezone is %s.
+- If the user gave relative dates like "сегодня", "завтра", "послезавтра", resolve them to a concrete RFC3339 datetime in that timezone.
+- If the user gave only a time, choose the nearest future occurrence in that timezone.
+- If there is no usable date/time in the message, return intent "unknown" and keep requires_confirmation true.
+- For a valid calendar event, intent must be "create_calendar_event", type "event", requires_confirmation true, duration_minutes at least 60 unless the user gave another duration.
+- Preserve or infer a short practical title from the message.
+
+User message:
+%s
+
+Initial JSON:
+%s`, nowRFC3339, timezone, text, string(payload))
+
+	repaired := parsed
+	if err := c.chatJSON(ctx, prompt, &repaired); err != nil {
+		return parsed, err
+	}
+	if !repaired.Intent.Valid() {
+		repaired.Intent = domain.IntentUnknown
+	}
+	if repaired.Intent != domain.IntentCreateCalendarEvent {
+		return repaired, nil
+	}
+	repaired.Type = domain.MemoryTypeEvent
+	repaired.RawText = text
+	repaired.RequiresConfirmation = true
+	if repaired.DurationMinutes <= 0 {
+		repaired.DurationMinutes = 60
+	}
+	return repaired, nil
+}
+
+func calendarIntentNeedsRepair(parsed domain.ParsedIntent) bool {
+	if strings.TrimSpace(parsed.Title) == "" || strings.TrimSpace(parsed.Datetime) == "" {
+		return true
+	}
+	_, err := time.Parse(time.RFC3339, parsed.Datetime)
+	return err != nil
 }
 
 func (c *Client) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {

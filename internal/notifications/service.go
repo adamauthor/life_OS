@@ -21,6 +21,8 @@ const (
 
 type Repository interface {
 	RegisterTelegramUser(ctx context.Context, input domain.RegisterTelegramUserInput) (domain.User, error)
+	GetUser(ctx context.Context, userID domain.UUID) (domain.User, error)
+	UpdateUserTimezone(ctx context.Context, userID domain.UUID, timezone string) error
 	GetAutonomySettings(ctx context.Context, userID domain.UUID) (domain.AutonomySettings, error)
 	SetAutonomyEnabled(ctx context.Context, userID domain.UUID, enabled bool) error
 	UpdateAutonomyQuietHours(ctx context.Context, userID domain.UUID, quietStart string, quietEnd string) error
@@ -128,6 +130,29 @@ func (s *Service) RegisterTelegramUser(ctx context.Context, input domain.Registe
 	}
 	input.DefaultAutonomyEnabled = s.defaultOn
 	return s.repository.RegisterTelegramUser(ctx, input)
+}
+
+func (s *Service) SetUserTimezone(ctx context.Context, userID domain.UUID, timezoneName string) error {
+	loc, err := time.LoadLocation(strings.TrimSpace(timezoneName))
+	if err != nil {
+		return fmt.Errorf("invalid timezone: %w", err)
+	}
+	return s.repository.UpdateUserTimezone(ctx, userID, loc.String())
+}
+
+func (s *Service) UserLocation(ctx context.Context, userID domain.UUID) *time.Location {
+	if s.repository == nil {
+		return s.timezone
+	}
+	user, err := s.repository.GetUser(ctx, userID)
+	if err != nil || strings.TrimSpace(user.Timezone) == "" {
+		return s.timezone
+	}
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil {
+		return s.timezone
+	}
+	return loc
 }
 
 func (s *Service) SetEnabled(ctx context.Context, userID domain.UUID, enabled bool) error {

@@ -37,7 +37,6 @@ func (r *NotificationRepository) RegisterTelegramUser(ctx context.Context, input
 			username = excluded.username,
 			first_name = excluded.first_name,
 			last_name = excluded.last_name,
-			timezone = excluded.timezone,
 			updated_at = now(),
 			last_seen_at = now()
 		returning id, telegram_user_id, default_chat_id, username, first_name, last_name, timezone, created_at, updated_at, last_seen_at
@@ -64,6 +63,47 @@ func (r *NotificationRepository) RegisterTelegramUser(ctx context.Context, input
 		return domain.User{}, err
 	}
 	return user, nil
+}
+
+func (r *NotificationRepository) GetUser(ctx context.Context, userID domain.UUID) (domain.User, error) {
+	const query = `
+		select id, telegram_user_id, default_chat_id, username, first_name, last_name, timezone, created_at, updated_at, last_seen_at
+		from users
+		where id = $1
+	`
+	var user domain.User
+	if err := r.db.QueryRow(ctx, query, userID).Scan(
+		&user.ID,
+		&user.TelegramUserID,
+		&user.DefaultChatID,
+		&user.Username,
+		&user.FirstName,
+		&user.LastName,
+		&user.Timezone,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&user.LastSeenAt,
+	); err != nil {
+		return domain.User{}, fmt.Errorf("select user: %w", err)
+	}
+	return user, nil
+}
+
+func (r *NotificationRepository) UpdateUserTimezone(ctx context.Context, userID domain.UUID, timezone string) error {
+	const query = `
+		update users
+		set timezone = $2,
+		    updated_at = now()
+		where id = $1
+	`
+	tag, err := r.exec(ctx, query, userID, timezone)
+	if err != nil {
+		return fmt.Errorf("update user timezone: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 func (r *NotificationRepository) GetAutonomySettings(ctx context.Context, userID domain.UUID) (domain.AutonomySettings, error) {

@@ -186,7 +186,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 		b.handleReplan(ctx, msg)
 		return ""
 	case "/review":
-		b.pendingReviews[userID(msg)] = time.Now().In(b.timezone)
+		b.pendingReviews[userID(msg)] = b.localNow(ctx, msg)
 		if b.reviewV2 != nil {
 			_ = b.reviewV2.StartDailyReview(ctx, domain.UserIDFromTelegram(userID(msg)))
 		}
@@ -211,7 +211,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 		b.handleMemoryQuestion(ctx, msg, query)
 		return "Ищу в памяти."
 	case "/settings":
-		return "Настройки профиля пока через переменные окружения: APP_TIMEZONE, GOOGLE_CALENDAR_ID."
+		return b.handleSettingsCommand(ctx, msg)
 	default:
 		return "Неизвестная команда. Напиши /help."
 	}
@@ -242,6 +242,17 @@ func (b *Bot) registerTelegramUser(ctx context.Context, msg *telegram.Message) {
 	}
 }
 
+func (b *Bot) localLocation(ctx context.Context, msg *telegram.Message) *time.Location {
+	if b.notifications == nil || msg == nil || msg.From == nil {
+		return b.timezone
+	}
+	return b.notifications.UserLocation(ctx, domain.UserIDFromTelegram(msg.From.ID))
+}
+
+func (b *Bot) localNow(ctx context.Context, msg *telegram.Message) time.Time {
+	return time.Now().In(b.localLocation(ctx, msg))
+}
+
 func (b *Bot) handleVoice(ctx context.Context, msg *telegram.Message) {
 	file, filename, err := b.client.DownloadFile(ctx, msg.Voice.FileID)
 	if err != nil {
@@ -264,6 +275,10 @@ func (b *Bot) handleVoice(ctx context.Context, msg *telegram.Message) {
 func (b *Bot) handleCalendarProposal(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent) {
 	if b.calendar == nil {
 		_ = b.client.SendMessage(ctx, chatID(msg), "Календарь не настроен.")
+		return
+	}
+	if clarification := calendarEventClarification(parsed); clarification != "" {
+		_ = b.client.SendMessage(ctx, chatID(msg), clarification)
 		return
 	}
 	action, err := b.calendar.ProposeEvent(ctx, domain.UserIDFromTelegram(userID(msg)), parsed)
@@ -436,6 +451,44 @@ func (b *Bot) handleAutonomyCommand(ctx context.Context, msg *telegram.Message) 
 	}
 }
 
+func (b *Bot) handleSettingsCommand(ctx context.Context, msg *telegram.Message) string {
+	payload := strings.TrimSpace(commandPayload(msg.Text))
+	userUUID := domain.UserIDFromTelegram(userID(msg))
+	if payload == "" || strings.EqualFold(payload, "status") {
+		loc := b.localLocation(ctx, msg)
+		now := time.Now().In(loc)
+		return strings.Join([]string{
+			"Настройки профиля:",
+			"Timezone: " + loc.String(),
+			"Локальное время: " + now.Format("2006-01-02 15:04"),
+			"",
+			"Команды:",
+			"/settings timezone Asia/Ho_Chi_Minh",
+			"/settings timezone Europe/Moscow",
+			"",
+			"Telegram не отдает timezone смартфона автоматически. Укажи IANA timezone один раз, дальше today/replan/calendar/review будут считать время по ней.",
+		}, "\n")
+	}
+
+	fields := strings.Fields(payload)
+	if len(fields) == 2 && strings.EqualFold(fields[0], "timezone") {
+		loc, err := time.LoadLocation(fields[1])
+		if err != nil {
+			return "Не понял timezone. Нужен IANA формат, например Asia/Ho_Chi_Minh или Europe/Moscow."
+		}
+		if b.notifications == nil {
+			return "Хранилище пользователя не настроено. Пока timezone берется из APP_TIMEZONE."
+		}
+		if err := b.notifications.SetUserTimezone(ctx, userUUID, loc.String()); err != nil {
+			b.logger.Error("failed to update user timezone", "error", err, "user_id", userUUID)
+			return "Не сохранил timezone."
+		}
+		return "Timezone обновлен: " + loc.String() + ". Локальное время: " + time.Now().In(loc).Format("2006-01-02 15:04")
+	}
+
+	return "Формат: /settings timezone Asia/Ho_Chi_Minh"
+}
+
 func (b *Bot) handleReplan(ctx context.Context, msg *telegram.Message) {
 	if b.planning != nil {
 		input := commandPayload(msg.Text)
@@ -445,7 +498,7 @@ func (b *Bot) handleReplan(ctx context.Context, msg *telegram.Message) {
 		if strings.TrimSpace(input) == "" || strings.HasPrefix(strings.TrimSpace(input), "/replan") {
 			input = "Перестрой день исходя из текущего состояния и календаря."
 		}
-		proposal, err := b.planning.BuildReplanProposal(ctx, domain.UserIDFromTelegram(userID(msg)), input, time.Now().In(b.timezone))
+		proposal, err := b.planning.BuildReplanProposal(ctx, domain.UserIDFromTelegram(userID(msg)), input, b.localNow(ctx, msg))
 		if err != nil {
 			b.logger.Error("failed to build adaptive replan", "error", err)
 			_ = b.client.SendMessage(ctx, chatID(msg), "Не смог перестроить день.")
@@ -483,7 +536,7 @@ func (b *Bot) handleReplan(ctx context.Context, msg *telegram.Message) {
 		return
 	}
 	var events []CalendarEvent
-	dayEvents, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), time.Now().In(b.timezone))
+	dayEvents, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), b.localNow(ctx, msg))
 	if err != nil {
 		b.logger.Error("failed to list calendar events for replan", "error", err)
 		_ = b.client.SendMessage(ctx, chatID(msg), calendarUserErrorText(err, "Не смог прочитать календарь для перепланирования."))
@@ -528,7 +581,7 @@ func (b *Bot) handleDailyReviewText(ctx context.Context, msg *telegram.Message) 
 		_ = b.client.SendMessage(ctx, chatID(msg), "Review storage не настроен.")
 		return
 	}
-	if _, err := b.reviews.SaveDailyReview(ctx, msg.Text, time.Now().In(b.timezone)); err != nil {
+	if _, err := b.reviews.SaveDailyReview(ctx, msg.Text, b.localNow(ctx, msg)); err != nil {
 		b.logger.Error("failed to save daily review", "error", err)
 		_ = b.client.SendMessage(ctx, chatID(msg), "Не сохранил review.")
 		return
@@ -701,7 +754,7 @@ func (b *Bot) schedule(ctx context.Context, msg *telegram.Message) string {
 	if b.calendar == nil {
 		return "Календарь не настроен."
 	}
-	events, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), time.Now().In(b.timezone))
+	events, err := b.calendar.ListDayForUser(ctx, domain.UserIDFromTelegram(userID(msg)), b.localNow(ctx, msg))
 	if err != nil {
 		b.logger.Error("failed to list today calendar", "error", err)
 		return calendarUserErrorText(err, "Не смог прочитать календарь. Проверь GOOGLE_CALENDAR_ID: для основного календаря используй primary.")
@@ -720,7 +773,7 @@ func (b *Bot) today(ctx context.Context, msg *telegram.Message) string {
 	if b.planning == nil {
 		return b.schedule(ctx, msg)
 	}
-	direction, err := b.planning.BuildDailyDirection(ctx, domain.UserIDFromTelegram(userID(msg)), time.Now().In(b.timezone))
+	direction, err := b.planning.BuildDailyDirection(ctx, domain.UserIDFromTelegram(userID(msg)), b.localNow(ctx, msg))
 	if err != nil {
 		b.logger.Error("failed to build daily direction", "error", err)
 		return "Не смог собрать направление дня."
@@ -732,7 +785,7 @@ func (b *Bot) weekly(ctx context.Context, msg *telegram.Message) string {
 	if b.reviewV2 == nil {
 		return "Weekly review не настроен."
 	}
-	now := time.Now().In(b.timezone)
+	now := b.localNow(ctx, msg)
 	weekStart := startOfWeek(now)
 	text, err := b.reviewV2.BuildWeeklyReview(ctx, domain.UserIDFromTelegram(userID(msg)), weekStart)
 	if err != nil {
@@ -775,13 +828,16 @@ func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message
 		_ = b.client.SendMessage(ctx, chatID(msg), "AI client не настроен.")
 		return
 	}
-	parsed, err := b.ai.ParseIntent(ctx, msg.Text, b.now(), b.timezone.String())
+	loc := b.localLocation(ctx, msg)
+	now := time.Now().In(loc)
+	parsed, err := b.ai.ParseIntent(ctx, msg.Text, now.Format(time.RFC3339), loc.String())
 	if err != nil {
 		b.logger.Error("failed to parse intent", "error", err)
 		_ = b.client.SendMessage(ctx, chatID(msg), "Не разобрал намерение. Переформулируй короче.")
 		return
 	}
 	parsed = normalizeParsedIntent(msg.Text, parsed)
+	parsed = completeCalendarIntentFromText(msg.Text, parsed, now)
 	b.sendRecognitionNotice(ctx, msg, source, parsed)
 
 	switch parsed.Intent {
@@ -828,6 +884,8 @@ func (b *Bot) sendRecognitionNotice(ctx context.Context, msg *telegram.Message, 
 }
 
 func (b *Bot) captureTextWithParsedSource(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent, source string) error {
+	loc := b.localLocation(ctx, msg)
+	now := time.Now().In(loc)
 	_, err := b.memories.CaptureParsedTelegramText(ctx, CaptureTelegramTextInput{
 		Text:       msg.Text,
 		Source:     source,
@@ -836,8 +894,8 @@ func (b *Bot) captureTextWithParsedSource(ctx context.Context, msg *telegram.Mes
 		UserID:     userID(msg),
 		Username:   username(msg),
 		TelegramAt: msg.Date,
-		Timezone:   b.timezone.String(),
-		NowRFC3339: b.now(),
+		Timezone:   loc.String(),
+		NowRFC3339: now.Format(time.RFC3339),
 	}, parsed)
 	return err
 }
@@ -887,7 +945,8 @@ func helpText() string {
 		"/calendar_status - статус календаря",
 		"/disconnect_calendar - отключить Google Calendar",
 		"/search <вопрос> - поиск по памяти",
-		"/settings - настройки профиля",
+		"/settings - timezone и настройки профиля",
+		"/settings timezone Asia/Ho_Chi_Minh - сохранить локальное время",
 		"",
 		"Правило: календарь меняю только после подтверждения кнопкой.",
 	}, "\n")
@@ -923,7 +982,8 @@ func startText() string {
 		"/autonomy on - включить автономные напоминания",
 		"/connect_calendar - подключить личный Google Calendar",
 		"/search <вопрос> - поиск по памяти",
-		"/settings - настройки",
+		"/settings - timezone и настройки",
+		"/settings timezone Asia/Ho_Chi_Minh - сохранить локальное время",
 		"",
 		"Следующий шаг: отправь мысль, задачу, событие или voice.",
 	}, "\n")
