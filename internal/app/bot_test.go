@@ -120,6 +120,20 @@ func (fakeCalendarConnector) Disconnect(_ context.Context, _ domain.UUID) error 
 	return nil
 }
 
+type pointerCalendarConnector struct{}
+
+func (*pointerCalendarConnector) BuildConnectURL(_ context.Context, _ domain.UUID, _ int64) (string, error) {
+	return "https://example.com/oauth", nil
+}
+
+func (*pointerCalendarConnector) StatusText(_ context.Context, _ domain.UUID) (string, error) {
+	return "Google Calendar подключен.", nil
+}
+
+func (*pointerCalendarConnector) Disconnect(_ context.Context, _ domain.UUID) error {
+	return nil
+}
+
 func TestRouteTextCommands(t *testing.T) {
 	bot := NewBot(noopTelegramClient{}, nil, nil, nil, nil, time.UTC, slog.Default())
 
@@ -207,5 +221,20 @@ func TestConnectCalendarCommandSendsURLButton(t *testing.T) {
 	buttons := telegramClient.buttonMessages[0].buttons
 	if len(buttons) != 1 || buttons[0].URL != "https://example.com/oauth" {
 		t.Fatalf("buttons = %#v, want oauth URL button", buttons)
+	}
+}
+
+func TestTypedNilCalendarConnectorIsTreatedAsDisabled(t *testing.T) {
+	bot := NewBot(noopTelegramClient{}, nil, nil, nil, nil, time.UTC, slog.Default())
+	var connector *pointerCalendarConnector
+	bot.ConfigureCalendarConnector(connector)
+
+	response := bot.routeText(context.Background(), &telegram.Message{
+		Text: "/connect_calendar",
+		Chat: &telegram.Chat{ID: 123},
+		From: &tgbotapi.User{ID: 456},
+	})
+	if !strings.Contains(response, "не настроено") {
+		t.Fatalf("response = %q, want disabled connector response", response)
 	}
 }

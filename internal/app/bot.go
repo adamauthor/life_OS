@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -79,7 +80,28 @@ func (b *Bot) ConfigureNotificationService(notificationService *notifications.Se
 }
 
 func (b *Bot) ConfigureCalendarConnector(connector CalendarConnector) {
+	if isNilCalendarConnector(connector) {
+		b.calendarOAuth = nil
+		return
+	}
 	b.calendarOAuth = connector
+}
+
+func (b *Bot) hasCalendarConnector() bool {
+	return !isNilCalendarConnector(b.calendarOAuth)
+}
+
+func isNilCalendarConnector(connector CalendarConnector) bool {
+	if connector == nil {
+		return true
+	}
+	value := reflect.ValueOf(connector)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -279,7 +301,7 @@ func (b *Bot) handleMemoryQuestion(ctx context.Context, msg *telegram.Message, q
 }
 
 func (b *Bot) handleConnectCalendar(ctx context.Context, msg *telegram.Message) string {
-	if b.calendarOAuth == nil {
+	if !b.hasCalendarConnector() {
 		return "Подключение Google Calendar не настроено. Нужны GOOGLE_CREDENTIALS_JSON или GOOGLE_CREDENTIALS_FILE и GOOGLE_OAUTH_REDIRECT_URL."
 	}
 	if err := b.sendCalendarConnectPrompt(ctx, msg, true); err != nil {
@@ -290,7 +312,7 @@ func (b *Bot) handleConnectCalendar(ctx context.Context, msg *telegram.Message) 
 }
 
 func (b *Bot) sendCalendarConnectPrompt(ctx context.Context, msg *telegram.Message, explicit bool) error {
-	if b.calendarOAuth == nil || msg == nil {
+	if !b.hasCalendarConnector() || msg == nil {
 		return nil
 	}
 	url, err := b.calendarOAuth.BuildConnectURL(ctx, domain.UserIDFromTelegram(userID(msg)), chatID(msg))
@@ -307,7 +329,7 @@ func (b *Bot) sendCalendarConnectPrompt(ctx context.Context, msg *telegram.Messa
 }
 
 func (b *Bot) handleCalendarStatus(ctx context.Context, msg *telegram.Message) string {
-	if b.calendarOAuth == nil {
+	if !b.hasCalendarConnector() {
 		return "Per-user Google Calendar OAuth не настроен."
 	}
 	text, err := b.calendarOAuth.StatusText(ctx, domain.UserIDFromTelegram(userID(msg)))
@@ -319,7 +341,7 @@ func (b *Bot) handleCalendarStatus(ctx context.Context, msg *telegram.Message) s
 }
 
 func (b *Bot) handleDisconnectCalendar(ctx context.Context, msg *telegram.Message) string {
-	if b.calendarOAuth == nil {
+	if !b.hasCalendarConnector() {
 		return "Per-user Google Calendar OAuth не настроен."
 	}
 	if err := b.calendarOAuth.Disconnect(ctx, domain.UserIDFromTelegram(userID(msg))); err != nil {
