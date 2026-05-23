@@ -1,36 +1,40 @@
-app = "life-os-bot"
-primary_region = "sin"
+# fly.toml app configuration file generated for life-os-friday on 2026-05-23T13:55:05Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'life-os-friday'
+primary_region = 'sin'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [deploy]
-  release_command = "./life-os-migrate up"
-  release_command_timeout = "5m"
-  strategy = "rolling"
+  strategy = 'rolling'
+  release_command = './life-os-migrate up'
+  release_command_timeout = '5m0s'
 
 [env]
-  APP_TIMEZONE = "Asia/Ho_Chi_Minh"
-  GOOGLE_CALENDAR_ID = "primary"
-  HTTP_ADDR = ":8080"
-  # Set GOOGLE_OAUTH_REDIRECT_URL and GOOGLE_CREDENTIALS_JSON as secrets for per-user calendars.
-  # Set CALENDAR_TOKEN_ENCRYPTION_KEY before users connect calendars.
-  MIGRATIONS_SOURCE = "file:///app/migrations"
-  AUTONOMY_SCHEDULER_ENABLED = "true"
-  AUTONOMY_DEFAULT_ENABLED = "false"
+  APP_TIMEZONE = 'Asia/Ho_Chi_Minh'
+  AUTONOMY_DEFAULT_ENABLED = 'false'
+  AUTONOMY_SCHEDULER_ENABLED = 'true'
+  GOOGLE_CALENDAR_ID = 'primary'
+  HTTP_ADDR = ':8080'
+  MIGRATIONS_SOURCE = 'file:///app/migrations'
+
+[processes]
+  app = './life-os-bot'
 
 [http_service]
   internal_port = 8080
-  processes = ["app"]
   force_https = true
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
-
-[processes]
-  app = "./life-os-bot"
+  processes = ['app']
 
 [[vm]]
-  memory = "512mb"
-  cpu_kind = "shared"
+  memory = '512mb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 512
