@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -117,10 +118,23 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) (io.ReadCloser
 		resp.Body.Close()
 		return nil, "", fmt.Errorf("telegram file download returned status %d", resp.StatusCode)
 	}
-	return resp.Body, "voice.ogg", nil
+	return resp.Body, filenameFromURL(url), nil
 }
 
 type InlineButton struct {
 	Text string
 	Data string
+}
+
+func filenameFromURL(rawURL string) string {
+	if strings.Contains(rawURL, ".oga") {
+		return "voice.oga"
+	}
+	if strings.Contains(rawURL, ".ogg") {
+		return "voice.ogg"
+	}
+	if strings.Contains(rawURL, ".webm") {
+		return "voice.webm"
+	}
+	return "voice.ogg"
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -16,6 +18,8 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	_ = godotenv.Load()
+
 	cfg := Config{
 		DatabaseURL:           os.Getenv("DATABASE_URL"),
 		GoogleCalendarID:      getenv("GOOGLE_CALENDAR_ID", "primary"),

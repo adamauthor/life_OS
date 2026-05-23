@@ -110,7 +110,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 
 	switch strings.Split(command[0], "@")[0] {
 	case "/start":
-		return "Adaptive Life Companion включен. Пиши мысль, задачу, событие или voice. Внешние действия делаю только после подтверждения."
+		return startText()
 	case "/help":
 		return helpText()
 	case "/capture":
@@ -137,34 +137,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 }
 
 func (b *Bot) handleNaturalText(ctx context.Context, msg *telegram.Message) {
-	if b.ai == nil {
-		_ = b.client.SendMessage(ctx, chatID(msg), "AI client не настроен.")
-		return
-	}
-	parsed, err := b.ai.ParseIntent(ctx, msg.Text, b.now(), b.timezone.String())
-	if err != nil {
-		b.logger.Error("failed to parse intent", "error", err)
-		_ = b.client.SendMessage(ctx, chatID(msg), "Не разобрал намерение. Переформулируй короче.")
-		return
-	}
-
-	switch parsed.Intent {
-	case domain.IntentCreateCalendarEvent:
-		b.handleCalendarProposal(ctx, msg, parsed)
-	case domain.IntentAskMemory:
-		b.handleMemoryQuestion(ctx, msg, msg.Text)
-	case domain.IntentReplanDay:
-		b.handleReplan(ctx, msg)
-	case domain.IntentDailyReview:
-		b.handleDailyReviewText(ctx, msg)
-	default:
-		if err := b.captureTextWithParsed(ctx, msg, parsed); err != nil {
-			b.logger.Error("failed to capture telegram text", "error", err)
-			_ = b.client.SendMessage(ctx, chatID(msg), "Не сохранил: ошибка памяти. Проверь базу и повтори.")
-			return
-		}
-		_ = b.client.SendMessage(ctx, chatID(msg), "Сохранил в память.")
-	}
+	b.handleNaturalTextSource(ctx, msg, "telegram")
 }
 
 func (b *Bot) handleVoice(ctx context.Context, msg *telegram.Message) {
@@ -183,7 +156,7 @@ func (b *Bot) handleVoice(ctx context.Context, msg *telegram.Message) {
 		return
 	}
 	msg.Text = transcription
-	b.handleNaturalText(ctx, msg)
+	b.handleNaturalTextSource(ctx, msg, "telegram_voice")
 }
 
 func (b *Bot) handleCalendarProposal(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent) {
@@ -329,7 +302,7 @@ func (b *Bot) today(ctx context.Context, msg *telegram.Message) string {
 	events, err := b.calendar.ListDay(ctx, time.Now().In(b.timezone))
 	if err != nil {
 		b.logger.Error("failed to list today calendar", "error", err)
-		return "Не смог прочитать календарь."
+		return "Не смог прочитать календарь. Проверь GOOGLE_CALENDAR_ID: для основного календаря используй primary."
 	}
 	if len(events) == 0 {
 		return "На сегодня событий нет."
@@ -342,8 +315,53 @@ func (b *Bot) today(ctx context.Context, msg *telegram.Message) string {
 }
 
 func (b *Bot) captureTextWithParsed(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent) error {
+	return b.captureTextWithParsedSource(ctx, msg, parsed, "telegram")
+}
+
+func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message, source string) {
+	if b.ai == nil {
+		_ = b.client.SendMessage(ctx, chatID(msg), "AI client не настроен.")
+		return
+	}
+	parsed, err := b.ai.ParseIntent(ctx, msg.Text, b.now(), b.timezone.String())
+	if err != nil {
+		b.logger.Error("failed to parse intent", "error", err)
+		_ = b.client.SendMessage(ctx, chatID(msg), "Не разобрал намерение. Переформулируй короче.")
+		return
+	}
+	parsed = normalizeParsedIntent(msg.Text, parsed)
+
+	switch parsed.Intent {
+	case domain.IntentCreateCalendarEvent:
+		b.handleCalendarProposal(ctx, msg, parsed)
+	case domain.IntentAskMemory:
+		b.handleMemoryQuestion(ctx, msg, msg.Text)
+	case domain.IntentReplanDay:
+		b.handleReplan(ctx, msg)
+	case domain.IntentDailyReview:
+		b.handleDailyReviewText(ctx, msg)
+	default:
+		if !shouldCaptureAsMemory(parsed.Intent) {
+			_ = b.client.SendMessage(ctx, chatID(msg), "Не уверен, что это нужно сохранять в память. Скажи явно: идея, заметка, задача, событие или вопрос.")
+			return
+		}
+		if b.memories == nil {
+			_ = b.client.SendMessage(ctx, chatID(msg), "Память не настроена.")
+			return
+		}
+		if err := b.captureTextWithParsedSource(ctx, msg, parsed, source); err != nil {
+			b.logger.Error("failed to capture telegram text", "error", err)
+			_ = b.client.SendMessage(ctx, chatID(msg), "Не сохранил: ошибка памяти. Проверь базу и повтори.")
+			return
+		}
+		_ = b.client.SendMessage(ctx, chatID(msg), "Сохранил в память.")
+	}
+}
+
+func (b *Bot) captureTextWithParsedSource(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent, source string) error {
 	_, err := b.memories.CaptureParsedTelegramText(ctx, CaptureTelegramTextInput{
 		Text:       msg.Text,
+		Source:     source,
 		ChatID:     chatID(msg),
 		MessageID:  msg.MessageID,
 		UserID:     userID(msg),
@@ -361,14 +379,54 @@ func (b *Bot) now() string {
 
 func helpText() string {
 	return strings.Join([]string{
+		"Adaptive Life Companion",
+		"",
+		"Можно писать обычным текстом или voice. Команды не обязательны.",
+		"",
+		"Примеры:",
+		"идея: сервис учета калорий как финансовый бюджет",
+		"завтра в 11 разобрать Kafka consumer groups",
+		"я проспал, сейчас 11:40, перестрой день",
+		"что я говорил про AI Life OS",
+		"",
 		"Команды:",
+		"/start - краткий user guide",
+		"/help - список команд и примеры",
 		"/capture - сохранить мысль, задачу, идею или заметку",
 		"/schedule - события дня",
 		"/replan - перестроить день",
 		"/today - показать день",
 		"/review - daily review",
-		"/search - поиск по памяти",
+		"/search <вопрос> - поиск по памяти",
 		"/settings - настройки профиля",
+		"",
+		"Правило: календарь меняю только после подтверждения кнопкой Да.",
+	}, "\n")
+}
+
+func startText() string {
+	return strings.Join([]string{
+		"Adaptive Life Companion включен.",
+		"",
+		"Как пользоваться:",
+		"1. Пиши или говори естественно. Команды не обязательны.",
+		"2. Я сам определю: память, задача, событие, поиск, review или replan.",
+		"3. Календарь меняю только после твоего подтверждения.",
+		"",
+		"Voice-first примеры:",
+		"- я проспал, сейчас 11:40, перестрой день",
+		"- завтра в 11 разобрать Kafka consumer groups",
+		"- идея: сервис учета калорий как финансовый бюджет",
+		"",
+		"Команды:",
+		"/help - полный список",
+		"/today - события дня",
+		"/replan - перестроить день",
+		"/review - daily review",
+		"/search <вопрос> - поиск по памяти",
+		"/settings - настройки",
+		"",
+		"Следующий шаг: отправь мысль, задачу, событие или voice.",
 	}, "\n")
 }
 

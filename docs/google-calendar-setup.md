@@ -8,7 +8,21 @@ Required environment variables:
 - `GOOGLE_TOKEN_FILE`: OAuth token JSON for the target Google account.
 - `GOOGLE_CALENDAR_ID`: calendar ID, usually `primary`.
 
-The MVP expects `GOOGLE_TOKEN_FILE` to already exist. This keeps the bot runtime simple and avoids interactive OAuth inside the Telegram process.
+The bot runtime expects `GOOGLE_TOKEN_FILE` to already exist. Generate it once with:
+
+```sh
+GOOGLE_CREDENTIALS_FILE=client_secret_google_calendar.json \
+GOOGLE_TOKEN_FILE=google_token_calendar.json \
+go run ./cmd/google-auth
+```
+
+If your OAuth client type is `Web application`, add this authorized redirect URI in Google Cloud:
+
+```text
+http://localhost:8085/oauth2callback
+```
+
+For a local-only setup, `Desktop app` OAuth credentials are also fine, but this helper uses the same localhost callback flow.
 
 Calendar safety rules:
 

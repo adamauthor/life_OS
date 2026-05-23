@@ -16,12 +16,22 @@ go run ./cmd/bot
 
 Environment example: `.env.example`.
 
+User guide: `docs/user-guide.md`.
+
 Google Calendar is enabled when both files are configured:
 
 ```sh
 GOOGLE_CREDENTIALS_FILE=/absolute/path/oauth-client.json
 GOOGLE_TOKEN_FILE=/absolute/path/token.json
 GOOGLE_CALENDAR_ID=primary
+```
+
+Generate the token file once:
+
+```sh
+GOOGLE_CREDENTIALS_FILE=client_secret_google_calendar.json \
+GOOGLE_TOKEN_FILE=google_token_calendar.json \
+go run ./cmd/google-auth
 ```
 
 ## Tests

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,9 +45,20 @@ Classify the user message into one of:
 capture_memory, create_task, create_calendar_event, replan_day, ask_memory, daily_review, weekly_review, habit_log, unknown.
 
 Memory type must be one of: idea, task, note, reflection, event, question.
+Use capture_memory only when the user is dumping a thought, idea, note, reflection, knowledge, or explicit task to remember.
+Do not use capture_memory for questions, calendar requests, or day replanning.
+Use ask_memory when the user asks what they previously said, thought, wrote, planned, or remembered.
+Use create_calendar_event when the user asks to schedule/add/plan an event at a date or time.
+Use replan_day when the user asks to rebuild/reschedule/replan the day, including being late or waking up late.
 For calendar writes, requires_confirmation must be true.
 For calendar events, include title, datetime in RFC3339 with timezone, duration_minutes.
 For memory capture, include summary and tags.
+
+Examples:
+"идея: сервис учета калорий как бюджет" => capture_memory, type idea
+"что я говорил про AI Life OS" => ask_memory, type question
+"завтра в 11 разобрать Kafka consumer groups" => create_calendar_event, type event, requires_confirmation true
+"я проспал, сейчас 11:40, перестрой день" => replan_day, requires_confirmation true
 
 User message:
 %s`, nowRFC3339, timezone, text)
@@ -92,16 +104,43 @@ func (c *Client) CreateEmbedding(ctx context.Context, text string) ([]float32, e
 	return vector, nil
 }
 
-func (c *Client) Transcribe(ctx context.Context, _ string, audio io.Reader) (string, error) {
+func (c *Client) Transcribe(ctx context.Context, filename string, audio io.Reader) (string, error) {
+	filename, contentType := audioFileMetadata(filename)
 	result, err := c.openai.Audio.Transcriptions.New(ctx, openai.AudioTranscriptionNewParams{
-		File:           audio,
+		File:           openai.File(audio, filename, contentType),
 		Model:          openai.AudioModelWhisper1,
+		Language:       openai.String("ru"),
+		Prompt:         openai.String("Russian personal assistant notes, calendar events, daily planning, tasks, ideas."),
 		ResponseFormat: openai.AudioResponseFormatJSON,
 	})
 	if err != nil {
 		return "", fmt.Errorf("openai transcription: %w", err)
 	}
 	return strings.TrimSpace(result.Text), nil
+}
+
+func audioFileMetadata(filename string) (string, string) {
+	if strings.TrimSpace(filename) == "" {
+		return "voice.ogg", "audio/ogg"
+	}
+
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".ogg", ".oga":
+		return filename, "audio/ogg"
+	case ".webm":
+		return filename, "audio/webm"
+	case ".mp3":
+		return filename, "audio/mpeg"
+	case ".m4a", ".mp4":
+		return filename, "audio/mp4"
+	case ".wav":
+		return filename, "audio/wav"
+	case ".flac":
+		return filename, "audio/flac"
+	default:
+		return filename + ".ogg", "audio/ogg"
+	}
 }
 
 func (c *Client) AnswerWithMemories(ctx context.Context, question string, memories []domain.Memory) (string, error) {

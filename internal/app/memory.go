@@ -31,6 +31,10 @@ func (s *MemoryService) CaptureTelegramText(ctx context.Context, input CaptureTe
 }
 
 func (s *MemoryService) CaptureParsedTelegramText(ctx context.Context, input CaptureTelegramTextInput, parsed domain.ParsedIntent) (domain.Memory, error) {
+	if !shouldCaptureAsMemory(parsed.Intent) {
+		return domain.Memory{}, fmt.Errorf("intent %q is not a memory capture intent", parsed.Intent)
+	}
+
 	memoryType := parsed.Type
 	if memoryType == "" {
 		memoryType = domain.MemoryTypeNote
@@ -49,7 +53,7 @@ func (s *MemoryService) CaptureParsedTelegramText(ctx context.Context, input Cap
 		RawText:   input.Text,
 		Summary:   summary,
 		Tags:      parsed.Tags,
-		Source:    "telegram",
+		Source:    input.SourceOrDefault(),
 		Embedding: embedding,
 		Metadata: map[string]any{
 			"intent":      parsed.Intent,
@@ -93,6 +97,7 @@ func (s *MemoryService) AnswerQuestion(ctx context.Context, question string) (st
 
 type CaptureTelegramTextInput struct {
 	Text       string
+	Source     string
 	ChatID     int64
 	MessageID  int
 	UserID     int64
@@ -100,4 +105,11 @@ type CaptureTelegramTextInput struct {
 	TelegramAt int
 	Timezone   string
 	NowRFC3339 string
+}
+
+func (i CaptureTelegramTextInput) SourceOrDefault() string {
+	if strings.TrimSpace(i.Source) == "" {
+		return "telegram"
+	}
+	return strings.TrimSpace(i.Source)
 }
