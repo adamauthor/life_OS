@@ -62,6 +62,8 @@ Connect:
 /connect_calendar
 ```
 
+The bot sends an inline button with a Google OAuth link. The user opens it, grants Calendar access, and the callback stores that user's token in PostgreSQL. No user-specific Google token is configured through environment variables.
+
 Check:
 
 ```text
@@ -101,9 +103,3 @@ Fixed markers:
 #fixed
 [фикс]
 ```
-
-## Legacy Single-Token Mode
-
-`GOOGLE_TOKEN_FILE` and `GOOGLE_TOKEN_JSON` still exist for private/local fallback. If used, set `CALENDAR_OWNER_TELEGRAM_ID`; otherwise the runtime disables the shared calendar client to avoid exposing one calendar to every user.
-
-Public usage should use per-user `/connect_calendar`.

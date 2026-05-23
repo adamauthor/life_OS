@@ -14,7 +14,6 @@ import (
 	"life_os/internal/calendar"
 	"life_os/internal/companion"
 	"life_os/internal/config"
-	"life_os/internal/domain"
 	"life_os/internal/notifications"
 	"life_os/internal/patterns"
 	"life_os/internal/planning"
@@ -55,30 +54,7 @@ func main() {
 	memoryService := app.NewMemoryService(memoryRepository, openAIClient)
 
 	calendarRepository := storage.NewCalendarActionRepository(postgres.Pool)
-	var calendarClient app.CalendarClient
-	if cfg.GoogleCredentialsFile != "" && cfg.GoogleTokenFile != "" {
-		googleCalendar, err := calendar.NewGoogleClient(ctx, cfg.GoogleCredentialsFile, cfg.GoogleTokenFile, cfg.GoogleCalendarID)
-		if err != nil {
-			logger.Warn("google calendar disabled", "error", err)
-		} else {
-			calendarClient = googleCalendar
-		}
-	} else if cfg.GoogleCredentialsJSON != "" && cfg.GoogleTokenJSON != "" {
-		googleCalendar, err := calendar.NewGoogleClientFromJSON(ctx, cfg.GoogleCredentialsJSON, cfg.GoogleTokenJSON, cfg.GoogleCalendarID)
-		if err != nil {
-			logger.Warn("google calendar disabled", "error", err)
-		} else {
-			calendarClient = googleCalendar
-		}
-	}
-	if calendarClient != nil && cfg.CalendarOwnerTelegramID == 0 {
-		logger.Warn("google calendar disabled: set CALENDAR_OWNER_TELEGRAM_ID to avoid exposing one calendar to every Telegram user")
-		calendarClient = nil
-	}
-	calendarService := app.NewCalendarService(calendarRepository, calendarClient)
-	if cfg.CalendarOwnerTelegramID != 0 {
-		calendarService.RestrictToUser(domain.UserIDFromTelegram(cfg.CalendarOwnerTelegramID))
-	}
+	calendarService := app.NewCalendarService(calendarRepository, nil)
 	var calendarOAuth *calendar.OAuthService
 	googleCredentialsJSON := cfg.GoogleCredentialsJSON
 	if googleCredentialsJSON == "" && cfg.GoogleCredentialsFile != "" {

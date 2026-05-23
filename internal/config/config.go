@@ -13,9 +13,6 @@ type Config struct {
 	GoogleCalendarID           string
 	GoogleCredentialsFile      string
 	GoogleCredentialsJSON      string
-	GoogleTokenFile            string
-	GoogleTokenJSON            string
-	CalendarOwnerTelegramID    int64
 	GoogleOAuthRedirectURL     string
 	CalendarTokenEncryptionKey string
 	HTTPAddr                   string
@@ -34,9 +31,6 @@ func Load() (Config, error) {
 		GoogleCalendarID:           getenv("GOOGLE_CALENDAR_ID", "primary"),
 		GoogleCredentialsFile:      os.Getenv("GOOGLE_CREDENTIALS_FILE"),
 		GoogleCredentialsJSON:      os.Getenv("GOOGLE_CREDENTIALS_JSON"),
-		GoogleTokenFile:            os.Getenv("GOOGLE_TOKEN_FILE"),
-		GoogleTokenJSON:            os.Getenv("GOOGLE_TOKEN_JSON"),
-		CalendarOwnerTelegramID:    getenvInt64("CALENDAR_OWNER_TELEGRAM_ID", 0),
 		GoogleOAuthRedirectURL:     getenv("GOOGLE_OAUTH_REDIRECT_URL", os.Getenv("GOOGLE_REDIRECT_URL")),
 		CalendarTokenEncryptionKey: os.Getenv("CALENDAR_TOKEN_ENCRYPTION_KEY"),
 		HTTPAddr:                   getenv("HTTP_ADDR", ":8080"),
@@ -65,18 +59,6 @@ func getenv(key string, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func getenvInt64(key string, fallback int64) int64 {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func getenvBool(key string, fallback bool) bool {

@@ -31,7 +31,6 @@ The service is one Go process:
 
 - `cmd/bot`: composition root and process entrypoint.
 - `cmd/migrate`: `golang-migrate` runner.
-- `cmd/google-auth`: legacy local helper for single-token calendar setup.
 - `internal/app`: Telegram routing and application orchestration.
 - `internal/ai`: OpenAI adapter and prompt contracts.
 - `internal/calendar`: Google Calendar client, per-user OAuth service, and OAuth callback server.

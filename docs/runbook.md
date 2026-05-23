@@ -47,7 +47,7 @@ Migrations:
 MIGRATIONS_SOURCE=file://migrations
 ```
 
-Legacy private calendar fallback still exists through `GOOGLE_TOKEN_FILE` or `GOOGLE_TOKEN_JSON`, but public use should use per-user `/connect_calendar`.
+User Google Calendar tokens are never configured through env. Each Telegram user connects their own calendar with `/connect_calendar`; tokens are stored in PostgreSQL.
 
 ## Local Setup
 

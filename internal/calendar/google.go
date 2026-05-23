@@ -2,16 +2,11 @@ package calendar
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	gcalendar "google.golang.org/api/calendar/v3"
-	"google.golang.org/api/option"
 
 	"life_os/internal/app"
 )
@@ -19,55 +14,6 @@ import (
 type GoogleClient struct {
 	calendarID string
 	service    *gcalendar.Service
-}
-
-func NewGoogleClient(ctx context.Context, credentialsFile string, tokenFile string, calendarID string) (*GoogleClient, error) {
-	if credentialsFile == "" || tokenFile == "" {
-		return nil, fmt.Errorf("google credentials and token files are required")
-	}
-	credentials, err := os.ReadFile(credentialsFile)
-	if err != nil {
-		return nil, fmt.Errorf("read google credentials: %w", err)
-	}
-	token, err := tokenFromFile(tokenFile)
-	if err != nil {
-		return nil, err
-	}
-	return NewGoogleClientFromJSON(ctx, string(credentials), tokenJSON(token), calendarID)
-}
-
-func NewGoogleClientFromJSON(ctx context.Context, credentialsJSON string, tokenJSONString string, calendarID string) (*GoogleClient, error) {
-	if credentialsJSON == "" || tokenJSONString == "" {
-		return nil, fmt.Errorf("google credentials and token JSON are required")
-	}
-	config, err := google.ConfigFromJSON([]byte(credentialsJSON), gcalendar.CalendarScope)
-	if err != nil {
-		return nil, fmt.Errorf("parse google credentials: %w", err)
-	}
-	var token oauth2.Token
-	if err := json.Unmarshal([]byte(tokenJSONString), &token); err != nil {
-		return nil, fmt.Errorf("decode google token JSON: %w", err)
-	}
-	httpClient := config.Client(ctx, &token)
-	service, err := gcalendar.NewService(ctx, option.WithHTTPClient(httpClient))
-	if err != nil {
-		return nil, fmt.Errorf("create google calendar service: %w", err)
-	}
-	if calendarID == "" {
-		calendarID = "primary"
-	}
-	return &GoogleClient{calendarID: calendarID, service: service}, nil
-}
-
-func tokenJSON(token *oauth2.Token) string {
-	if token == nil {
-		return ""
-	}
-	bytes, err := json.Marshal(token)
-	if err != nil {
-		return ""
-	}
-	return string(bytes)
 }
 
 func (c *GoogleClient) CreateEvent(ctx context.Context, input app.CreateCalendarEventInput) (string, error) {
@@ -138,20 +84,6 @@ func isFixedEvent(event *gcalendar.Event) bool {
 	}
 	text := strings.ToLower(event.Summary + "\n" + event.Description)
 	return strings.Contains(text, "[fixed]") || strings.Contains(text, "#fixed") || strings.Contains(text, "[фикс]")
-}
-
-func tokenFromFile(path string) (*oauth2.Token, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open google token: %w", err)
-	}
-	defer file.Close()
-
-	var token oauth2.Token
-	if err := json.NewDecoder(file).Decode(&token); err != nil {
-		return nil, fmt.Errorf("decode google token: %w", err)
-	}
-	return &token, nil
 }
 
 func calendarDateTime(value *gcalendar.EventDateTime) string {
