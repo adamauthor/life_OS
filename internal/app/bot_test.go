@@ -165,6 +165,9 @@ func TestVoiceMessageRunsNaturalReplanWithoutCommand(t *testing.T) {
 	if telegramClient.downloadedFileID != "voice-file-id" {
 		t.Fatalf("downloadedFileID = %q", telegramClient.downloadedFileID)
 	}
+	if len(telegramClient.messages) == 0 || !strings.Contains(telegramClient.messages[0], "Категория: перепланирование дня") {
+		t.Fatalf("messages = %#v, want voice recognition category", telegramClient.messages)
+	}
 	if len(telegramClient.buttonMessages) != 1 {
 		t.Fatalf("buttonMessages len = %d, want 1", len(telegramClient.buttonMessages))
 	}

@@ -749,6 +749,7 @@ func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message
 		return
 	}
 	parsed = normalizeParsedIntent(msg.Text, parsed)
+	b.sendRecognitionNotice(ctx, msg, source, parsed)
 
 	switch parsed.Intent {
 	case domain.IntentCreateCalendarEvent:
@@ -775,8 +776,22 @@ func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message
 			_ = b.client.SendMessage(ctx, chatID(msg), "Не сохранил: ошибка памяти. Проверь базу и повтори.")
 			return
 		}
-		_ = b.client.SendMessage(ctx, chatID(msg), "Сохранил в память.")
+		_ = b.client.SendMessage(ctx, chatID(msg), "Сохранил в память как "+memoryTypeLabel(parsed.Type)+".")
 	}
+}
+
+func (b *Bot) sendRecognitionNotice(ctx context.Context, msg *telegram.Message, source string, parsed domain.ParsedIntent) {
+	if source != "telegram_voice" {
+		return
+	}
+	lines := []string{
+		"Распознал voice:",
+		msg.Text,
+		"",
+		"Категория: " + intentLabel(parsed),
+		"Дальше: " + intentNextStep(parsed.Intent),
+	}
+	_ = b.client.SendMessage(ctx, chatID(msg), strings.Join(lines, "\n"))
 }
 
 func (b *Bot) captureTextWithParsedSource(ctx context.Context, msg *telegram.Message, parsed domain.ParsedIntent, source string) error {
@@ -803,6 +818,20 @@ func helpText() string {
 		"Adaptive Life Companion",
 		"",
 		"Можно писать обычным текстом или voice. Команды не обязательны.",
+		"После voice я показываю распознанный текст, категорию и следующий шаг.",
+		"",
+		"Что умею распознавать:",
+		"- память: идеи, задачи, заметки, рефлексии",
+		"- событие календаря: предложу и спрошу подтверждение",
+		"- replan: перестрою день и спрошу подтверждение перед изменениями",
+		"- вопрос к памяти: найду по embeddings",
+		"- daily/weekly review: сохраню выводы и patterns",
+		"",
+		"Что не умею:",
+		"- не меняю календарь без кнопки подтверждения",
+		"- не отправляю внешние сообщения",
+		"- не трекаю Apple Health, Screen Time, Obsidian, Web UI",
+		"- не гарантирую идеальный разбор двусмысленного текста; если непонятно, скажи явно: идея, задача, событие, вопрос или replan",
 		"",
 		"Примеры:",
 		"идея: сервис учета калорий как финансовый бюджет",
@@ -838,7 +867,13 @@ func startText() string {
 		"Как пользоваться:",
 		"1. Пиши или говори естественно. Команды не обязательны.",
 		"2. Я сам определю: память, задача, событие, поиск, review или replan.",
-		"3. Календарь меняю только после твоего подтверждения.",
+		"3. После voice покажу распознанный текст, категорию и следующий шаг.",
+		"4. Календарь меняю только после твоего подтверждения.",
+		"",
+		"Дисклеймер:",
+		"- Я не отправляю внешние сообщения.",
+		"- Я не меняю календарь без кнопки подтверждения.",
+		"- Если запрос двусмысленный, скажи явно: идея, задача, событие, вопрос, review или replan.",
 		"",
 		"Voice-first примеры:",
 		"- я проспал, сейчас 11:40, перестрой день",
@@ -859,6 +894,65 @@ func startText() string {
 		"",
 		"Следующий шаг: отправь мысль, задачу, событие или voice.",
 	}, "\n")
+}
+
+func intentLabel(parsed domain.ParsedIntent) string {
+	switch parsed.Intent {
+	case domain.IntentCaptureMemory:
+		return "память / " + memoryTypeLabel(parsed.Type)
+	case domain.IntentCreateTask:
+		return "задача"
+	case domain.IntentCreateCalendarEvent:
+		return "событие календаря"
+	case domain.IntentReplanDay:
+		return "перепланирование дня"
+	case domain.IntentAskMemory:
+		return "вопрос к памяти"
+	case domain.IntentDailyReview:
+		return "daily review"
+	case domain.IntentWeeklyReview:
+		return "weekly review"
+	case domain.IntentHabitLog:
+		return "habit log"
+	default:
+		return "непонятно"
+	}
+}
+
+func intentNextStep(intent domain.Intent) string {
+	switch intent {
+	case domain.IntentCaptureMemory, domain.IntentCreateTask, domain.IntentHabitLog:
+		return "сохраню в память, если это действительно заметка/идея/задача."
+	case domain.IntentCreateCalendarEvent:
+		return "подготовлю событие и попрошу подтверждение."
+	case domain.IntentReplanDay:
+		return "прочитаю календарь, предложу новый план и попрошу подтверждение."
+	case domain.IntentAskMemory:
+		return "поищу по памяти и отвечу с учетом найденного."
+	case domain.IntentDailyReview:
+		return "сохраню review, summary и patterns."
+	case domain.IntentWeeklyReview:
+		return "соберу weekly review."
+	default:
+		return "попрошу уточнить формат."
+	}
+}
+
+func memoryTypeLabel(memoryType domain.MemoryType) string {
+	switch memoryType {
+	case domain.MemoryTypeIdea:
+		return "идея"
+	case domain.MemoryTypeTask:
+		return "задача"
+	case domain.MemoryTypeReflection:
+		return "рефлексия"
+	case domain.MemoryTypeEvent:
+		return "событие"
+	case domain.MemoryTypeQuestion:
+		return "вопрос"
+	default:
+		return "заметка"
+	}
 }
 
 func dailyReviewQuestions() string {
