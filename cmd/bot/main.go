@@ -12,7 +12,11 @@ import (
 	"life_os/internal/ai"
 	"life_os/internal/app"
 	"life_os/internal/calendar"
+	"life_os/internal/companion"
 	"life_os/internal/config"
+	"life_os/internal/patterns"
+	"life_os/internal/planning"
+	reviewsvc "life_os/internal/review"
 	"life_os/internal/storage"
 	"life_os/internal/telegram"
 )
@@ -57,6 +61,13 @@ func main() {
 		} else {
 			calendarClient = googleCalendar
 		}
+	} else if cfg.GoogleCredentialsJSON != "" && cfg.GoogleTokenJSON != "" {
+		googleCalendar, err := calendar.NewGoogleClientFromJSON(ctx, cfg.GoogleCredentialsJSON, cfg.GoogleTokenJSON, cfg.GoogleCalendarID)
+		if err != nil {
+			logger.Warn("google calendar disabled", "error", err)
+		} else {
+			calendarClient = googleCalendar
+		}
 	}
 	calendarService := app.NewCalendarService(calendarRepository, calendarClient)
 
@@ -69,7 +80,14 @@ func main() {
 		location = time.UTC
 	}
 
+	adaptiveRepository := storage.NewAdaptiveRepository(postgres.Pool)
+	patternService := patterns.NewService(adaptiveRepository)
+	companionService := companion.NewService(patternService)
+	adaptiveReviewService := reviewsvc.NewService(reviewRepository, adaptiveRepository, memoryRepository, openAIClient, patternService, calendarService, location)
+	planningService := planning.NewService(adaptiveRepository, adaptiveRepository, reviewRepository, patternService, calendarService, openAIClient, location)
+
 	bot := app.NewBot(client, memoryService, calendarService, reviewService, openAIClient, location, logger)
+	bot.ConfigureAdaptiveServices(planningService, adaptiveReviewService, patternService, companionService)
 
 	if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("bot stopped with error", "error", err)

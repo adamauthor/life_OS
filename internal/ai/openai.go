@@ -42,7 +42,7 @@ Current time: %s
 Timezone: %s
 
 Classify the user message into one of:
-capture_memory, create_task, create_calendar_event, replan_day, ask_memory, daily_review, weekly_review, habit_log, unknown.
+capture_memory, create_calendar_event, replan_day, daily_review, weekly_review, ask_memory, habit_log, unknown.
 
 Memory type must be one of: idea, task, note, reflection, event, question.
 Use capture_memory only when the user is dumping a thought, idea, note, reflection, knowledge, or explicit task to remember.
@@ -50,6 +50,9 @@ Do not use capture_memory for questions, calendar requests, or day replanning.
 Use ask_memory when the user asks what they previously said, thought, wrote, planned, or remembered.
 Use create_calendar_event when the user asks to schedule/add/plan an event at a date or time.
 Use replan_day when the user asks to rebuild/reschedule/replan the day, including being late or waking up late.
+Use daily_review when the message answers a daily reflection: what was done, what was lost, what helped, what harmed, and what must happen tomorrow.
+Use weekly_review when the user asks to summarize or review the last week.
+Use habit_log when the user reports a measurable habit completion.
 For calendar writes, requires_confirmation must be true.
 For calendar events, include title, datetime in RFC3339 with timezone, duration_minutes.
 For memory capture, include summary and tags.
@@ -59,6 +62,8 @@ Examples:
 "что я говорил про AI Life OS" => ask_memory, type question
 "завтра в 11 разобрать Kafka consumer groups" => create_calendar_event, type event, requires_confirmation true
 "я проспал, сейчас 11:40, перестрой день" => replan_day, requires_confirmation true
+"ревью дня: сделал тренировку, слил утро, помогла прогулка, завтра deep work" => daily_review
+"сделай weekly review" => weekly_review
 
 User message:
 %s`, nowRFC3339, timezone, text)
@@ -164,29 +169,63 @@ Memory context:
 }
 
 func (c *Client) SummarizeDailyReview(ctx context.Context, rawText string) (domain.DailyReview, error) {
-	var parsed struct {
-		Summary  string   `json:"summary"`
-		Mood     string   `json:"mood"`
-		Energy   int      `json:"energy"`
-		Wins     []string `json:"wins"`
-		Failures []string `json:"failures"`
-		Patterns []string `json:"patterns"`
-	}
-	prompt := fmt.Sprintf(`Return strict JSON only. Summarize this daily review.
-Fields: summary string, mood string, energy integer 1-10 if known else 0, wins array, failures array, patterns array.
+	return c.AnalyzeDailyReview(ctx, rawText, nil, nil)
+}
 
-Review:
-%s`, rawText)
+func (c *Client) AnalyzeDailyReview(ctx context.Context, rawText string, recentMemories []domain.Memory, previousPatterns []domain.BehavioralPattern) (domain.DailyReview, error) {
+	var parsed struct {
+		Summary       string                   `json:"summary"`
+		Wins          []string                 `json:"wins"`
+		Failures      []string                 `json:"failures"`
+		Helped        []string                 `json:"helped"`
+		Harmed        []string                 `json:"harmed"`
+		TomorrowFocus []string                 `json:"tomorrow_focus"`
+		Patterns      []domain.DetectedPattern `json:"patterns"`
+	}
+	prompt := fmt.Sprintf(`Return strict JSON only.
+Analyze the daily review in Russian.
+Extract concise, practical facts. Do not validate avoidance. Do not shame.
+
+Output schema:
+{
+  "summary": "string",
+  "wins": [],
+  "failures": [],
+  "helped": [],
+  "harmed": [],
+  "tomorrow_focus": [],
+  "patterns": [
+    {
+      "code": "snake_case_ascii",
+      "title": "string",
+      "description": "string",
+      "signals": [],
+      "outcomes": [],
+      "counter_actions": [],
+      "confidence": 0.5
+    }
+  ]
+}
+
+Raw review:
+%s
+
+Recent memories JSON:
+%s
+
+Previous patterns JSON:
+%s`, rawText, jsonForPrompt(recentMemories), jsonForPrompt(previousPatterns))
 	if err := c.chatJSON(ctx, prompt, &parsed); err != nil {
 		return domain.DailyReview{}, err
 	}
 	return domain.DailyReview{
-		Summary:  parsed.Summary,
-		Mood:     parsed.Mood,
-		Energy:   parsed.Energy,
-		Wins:     parsed.Wins,
-		Failures: parsed.Failures,
-		Patterns: parsed.Patterns,
+		Summary:       parsed.Summary,
+		Wins:          parsed.Wins,
+		Failures:      parsed.Failures,
+		Helped:        parsed.Helped,
+		Harmed:        parsed.Harmed,
+		TomorrowFocus: parsed.TomorrowFocus,
+		Patterns:      parsed.Patterns,
 	}, nil
 }
 
@@ -231,6 +270,179 @@ Calendar events JSON:
 	return proposal, nil
 }
 
+func (c *Client) BuildDailyDirection(ctx context.Context, input domain.DailyDirectionPromptInput) (domain.DailyDirection, error) {
+	var parsed struct {
+		DirectionText string            `json:"direction_text"`
+		Anchors       []domain.Anchor   `json:"anchors"`
+		Priorities    []domain.Priority `json:"priorities"`
+	}
+	prompt := fmt.Sprintf(`Return strict JSON only.
+You are Adaptive Life OS in authority_companion mode.
+Build a daily direction, not a rigid schedule.
+Rules:
+- Give 3-5 anchors and 1-3 priorities.
+- Distribute anchors across the day using broad windows.
+- Respect fixed calendar events and do not conflict with existing calendar events.
+- Do not create a minute-by-minute schedule.
+- Do not propose autonomous calendar writes.
+- Be direct, concrete, non-abusive, and do not validate avoidance.
+
+Output schema:
+{
+  "direction_text": "short Russian summary",
+  "anchors": [
+    {
+      "type": "anchor|flexible|optional|recovery",
+      "title": "string",
+      "window": "broad day window, not exact minute-by-minute",
+      "duration_minutes": 30,
+      "calendar_write": false
+    }
+  ],
+  "priorities": [
+    {"title": "string", "why": "string"}
+  ]
+}
+
+Date: %s
+Timezone: %s
+Current time: %s
+
+User profile JSON:
+%s
+
+Goals JSON:
+%s
+
+Today calendar JSON:
+%s
+
+Recent memories JSON:
+%s
+
+Recent reviews JSON:
+%s
+
+Recent patterns JSON:
+%s`, input.Date.Format("2006-01-02"), input.Timezone, input.Now.Format(time.RFC3339), jsonForPrompt(input.Profile), jsonForPrompt(input.Goals), jsonForPrompt(input.Events), jsonForPrompt(input.Memories), jsonForPrompt(input.Reviews), jsonForPrompt(input.Patterns))
+	if err := c.chatJSON(ctx, prompt, &parsed); err != nil {
+		return domain.DailyDirection{}, err
+	}
+	return domain.DailyDirection{
+		Text:       parsed.DirectionText,
+		Anchors:    parsed.Anchors,
+		Priorities: parsed.Priorities,
+	}, nil
+}
+
+func (c *Client) BuildReplanProposal(ctx context.Context, input domain.ReplanPromptInput) (domain.ReplanAIResponse, error) {
+	prompt := fmt.Sprintf(`Return strict JSON only.
+You are Adaptive Life OS in authority_companion mode.
+Rebuild the day realistically after the user's update.
+
+Rules:
+- Human override mandatory: propose changes, do not imply calendar changes are already applied.
+- Respect fixed events. Do not move fixed events.
+- Do not create a minute-by-minute schedule.
+- Split the plan into block types: fixed, anchor, flexible, optional, recovery.
+- Calendar writes are only for important confirmed blocks. Set calendar_write=false for anchors/recovery unless truly important.
+- If you detect an avoidance pattern, name it directly without shame.
+- Give an authority_message that is direct, concrete, and non-abusive.
+
+Output schema:
+{
+  "reason": "string",
+  "risk_detected": "string",
+  "plan": {
+    "date": "YYYY-MM-DD",
+    "reason": "string",
+    "blocks": [
+      {
+        "type": "fixed|anchor|flexible|optional|recovery",
+        "title": "string",
+        "start": "HH:MM or broad window",
+        "duration_minutes": 60,
+        "calendar_write": false
+      }
+    ]
+  },
+  "calendar_actions": [
+    {
+      "action": "create|update",
+      "source_event_id": "calendar id when updating",
+      "title": "string",
+      "start": "RFC3339 datetime",
+      "end": "RFC3339 datetime",
+      "duration_minutes": 60,
+      "block_type": "flexible",
+      "calendar_write": true
+    }
+  ],
+  "authority_message": "string"
+}
+
+User message:
+%s
+
+Date: %s
+Current time: %s
+Timezone: %s
+
+User profile JSON:
+%s
+
+Today calendar JSON:
+%s
+
+Recent patterns JSON:
+%s
+
+Recent reviews JSON:
+%s
+
+Recent memories JSON:
+%s`, input.UserMessage, input.Date.Format("2006-01-02"), input.CurrentTime.Format(time.RFC3339), input.Timezone, jsonForPrompt(input.Profile), jsonForPrompt(input.Events), jsonForPrompt(input.Patterns), jsonForPrompt(input.Reviews), jsonForPrompt(input.Memories))
+
+	var response domain.ReplanAIResponse
+	if err := c.chatJSON(ctx, prompt, &response); err != nil {
+		return domain.ReplanAIResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) BuildWeeklyReview(ctx context.Context, input domain.WeeklyReviewInput) (string, error) {
+	prompt := fmt.Sprintf(`Answer in Russian. Be direct, useful, and short.
+Analyze the last 7 days from memories, reviews, calendar events, habit logs, and patterns.
+Return exactly these sections:
+
+Что работало
+Что ломало режим
+Главный паттерн недели
+Главная проблема
+Фокус следующей недели
+
+No toxic shame. No vague encouragement. Include at least one concrete pattern and one next-week focus.
+
+Week start: %s
+Week end: %s
+
+Reviews JSON:
+%s
+
+Memories JSON:
+%s
+
+Calendar events JSON:
+%s
+
+Habit logs JSON:
+%s
+
+Behavioral patterns JSON:
+%s`, input.WeekStart.Format("2006-01-02"), input.WeekEnd.Format("2006-01-02"), jsonForPrompt(input.Reviews), jsonForPrompt(input.Memories), jsonForPrompt(input.Events), jsonForPrompt(input.HabitLogs), jsonForPrompt(input.Patterns))
+	return c.chatText(ctx, prompt)
+}
+
 func (c *Client) chatJSON(ctx context.Context, prompt string, out any) error {
 	jsonObject := shared.NewResponseFormatJSONObjectParam()
 	chat, err := c.openai.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
@@ -253,6 +465,14 @@ func (c *Client) chatJSON(ctx context.Context, prompt string, out any) error {
 		return fmt.Errorf("decode openai json: %w", err)
 	}
 	return nil
+}
+
+func jsonForPrompt(value any) string {
+	bytes, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "null"
+	}
+	return string(bytes)
 }
 
 func (c *Client) chatText(ctx context.Context, prompt string) (string, error) {

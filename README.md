@@ -8,6 +8,9 @@ Self-hosted Telegram bot MVP for memory capture, calendar proposals, voice input
 docker compose up -d postgres
 
 DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
+go run ./cmd/migrate up
+
+DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
 OPENAI_API_KEY=sk-proj-example \
 TELEGRAM_BOT_TOKEN=123:abc \
 APP_TIMEZONE=Asia/Ho_Chi_Minh \
@@ -25,6 +28,22 @@ GOOGLE_CREDENTIALS_FILE=/absolute/path/oauth-client.json
 GOOGLE_TOKEN_FILE=/absolute/path/token.json
 GOOGLE_CALENDAR_ID=primary
 ```
+
+For Fly.io deployment, see `docs/deploy-fly.md`.
+
+## Migrations
+
+Migrations use `golang-migrate` format:
+
+```sh
+DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
+go run ./cmd/migrate up
+
+DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
+go run ./cmd/migrate version
+```
+
+The Docker image includes `life-os-migrate`; Fly runs `./life-os-migrate up` as `release_command`.
 
 Generate the token file once:
 
@@ -52,7 +71,7 @@ MVP milestones 1-9 are implemented as one modular monolith:
 - Text message intake.
 - Voice-first input: voice messages go through Whisper, intent parsing, classification, and the same action pipeline without commands.
 - PostgreSQL + pgvector via Docker Compose.
-- Initial SQL migration for MVP entities.
+- SQL migrations via `golang-migrate`.
 - AI intent parser with strict JSON output.
 - Incoming non-command text messages are classified, summarized, embedded, and saved to `memories`.
 - Voice messages are downloaded from Telegram, transcribed with Whisper, and sent through the same intent pipeline.
@@ -62,6 +81,7 @@ MVP milestones 1-9 are implemented as one modular monolith:
 - Replan requests read the day calendar, produce a structured proposed plan, and mutate calendar events only after `Confirm`.
 - `/search` performs semantic search over memory and answers with context.
 - Daily review text is summarized, saved to `daily_reviews`, and stored in memory as a `reflection`.
+- Memories, reviews, patterns, proposals, and calendar action approvals are scoped by Telegram user.
 
 ## Architecture
 

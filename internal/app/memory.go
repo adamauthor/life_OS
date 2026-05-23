@@ -10,7 +10,7 @@ import (
 
 type MemoryRepository interface {
 	CreateMemory(ctx context.Context, memory domain.Memory) (domain.Memory, error)
-	SearchMemories(ctx context.Context, queryEmbedding []float32, limit int) ([]domain.Memory, error)
+	SearchMemories(ctx context.Context, userID domain.UUID, queryEmbedding []float32, limit int) ([]domain.Memory, error)
 }
 
 type MemoryService struct {
@@ -47,8 +47,10 @@ func (s *MemoryService) CaptureParsedTelegramText(ctx context.Context, input Cap
 	if err != nil {
 		return domain.Memory{}, fmt.Errorf("create embedding: %w", err)
 	}
+	userUUID := domain.UserIDFromTelegram(input.UserID)
 
 	memory, err := domain.NewMemory(domain.NewMemoryInput{
+		UserID:    userUUID,
 		Type:      memoryType,
 		RawText:   input.Text,
 		Summary:   summary,
@@ -61,6 +63,7 @@ func (s *MemoryService) CaptureParsedTelegramText(ctx context.Context, input Cap
 			"chat_id":     input.ChatID,
 			"message_id":  input.MessageID,
 			"user_id":     input.UserID,
+			"user_uuid":   userUUID.String(),
 			"username":    input.Username,
 			"telegram_at": input.TelegramAt,
 		},
@@ -77,13 +80,13 @@ func (s *MemoryService) CaptureParsedTelegramText(ctx context.Context, input Cap
 	return saved, nil
 }
 
-func (s *MemoryService) AnswerQuestion(ctx context.Context, question string) (string, error) {
+func (s *MemoryService) AnswerQuestion(ctx context.Context, userID domain.UUID, question string) (string, error) {
 	embedding, err := s.ai.CreateEmbedding(ctx, question)
 	if err != nil {
 		return "", fmt.Errorf("create query embedding: %w", err)
 	}
 
-	memories, err := s.repository.SearchMemories(ctx, embedding, 6)
+	memories, err := s.repository.SearchMemories(ctx, userID, embedding, 6)
 	if err != nil {
 		return "", fmt.Errorf("search memories: %w", err)
 	}

@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.env
+client_secret*.json
+google_token*.json
+tmp
+dist
+coverage.out

@@ -19,6 +19,7 @@ const (
 
 type Memory struct {
 	ID        int64
+	UserID    UUID
 	Type      MemoryType
 	RawText   string
 	Summary   string
@@ -30,6 +31,7 @@ type Memory struct {
 }
 
 type NewMemoryInput struct {
+	UserID    UUID
 	Type      MemoryType
 	RawText   string
 	Summary   string
@@ -64,6 +66,7 @@ func NewMemory(input NewMemoryInput) (Memory, error) {
 	}
 
 	return Memory{
+		UserID:    input.UserID,
 		Type:      memoryType,
 		RawText:   rawText,
 		Summary:   summary,

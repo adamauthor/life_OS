@@ -16,14 +16,7 @@ type AIClient interface {
 	ReplanDay(ctx context.Context, message string, calendarEvents []CalendarEvent) (ReplanProposal, error)
 }
 
-type CalendarEvent struct {
-	ID          string
-	Title       string
-	Start       string
-	End         string
-	IsFixed     bool
-	Description string
-}
+type CalendarEvent = domain.CalendarEvent
 
 type ReplanProposal struct {
 	Summary string               `json:"summary"`

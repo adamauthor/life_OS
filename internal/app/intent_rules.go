@@ -17,6 +17,12 @@ func normalizeParsedIntent(text string, parsed domain.ParsedIntent) domain.Parse
 		parsed.Intent = domain.IntentReplanDay
 		parsed.Type = ""
 		parsed.RequiresConfirmation = true
+	case looksLikeWeeklyReview(normalized):
+		parsed.Intent = domain.IntentWeeklyReview
+		parsed.Type = ""
+	case looksLikeDailyReview(normalized):
+		parsed.Intent = domain.IntentDailyReview
+		parsed.Type = domain.MemoryTypeReflection
 	case looksLikeMemoryQuestion(normalized):
 		parsed.Intent = domain.IntentAskMemory
 		parsed.Type = domain.MemoryTypeQuestion
@@ -37,7 +43,7 @@ func normalizeParsedIntent(text string, parsed domain.ParsedIntent) domain.Parse
 
 func shouldCaptureAsMemory(intent domain.Intent) bool {
 	switch intent {
-	case domain.IntentCaptureMemory, domain.IntentCreateTask, domain.IntentHabitLog, domain.IntentWeeklyReview:
+	case domain.IntentCaptureMemory, domain.IntentCreateTask, domain.IntentHabitLog:
 		return true
 	default:
 		return false
@@ -59,6 +65,22 @@ func looksLikeMemoryQuestion(text string) bool {
 		strings.Contains(text, "напомни что") ||
 		strings.Contains(text, "найди в памяти") ||
 		strings.Contains(text, "поиск по памяти")
+}
+
+func looksLikeDailyReview(text string) bool {
+	return strings.Contains(text, "ревью дня") ||
+		strings.Contains(text, "итоги дня") ||
+		strings.Contains(text, "daily review") ||
+		(strings.Contains(text, "что сделал") && strings.Contains(text, "что слил")) ||
+		(strings.Contains(text, "сделал") && strings.Contains(text, "помогло") && strings.Contains(text, "завтра"))
+}
+
+func looksLikeWeeklyReview(text string) bool {
+	return strings.Contains(text, "weekly review") ||
+		strings.Contains(text, "недельное ревью") ||
+		strings.Contains(text, "ревью недели") ||
+		strings.Contains(text, "итоги недели") ||
+		strings.Contains(text, "последние 7 дней")
 }
 
 func looksLikeCalendarEvent(text string) bool {

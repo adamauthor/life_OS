@@ -1,0 +1,23 @@
+app = "life-os-bot"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "./life-os-migrate up"
+  release_command_timeout = "5m"
+  strategy = "rolling"
+
+[env]
+  APP_TIMEZONE = "Asia/Ho_Chi_Minh"
+  GOOGLE_CALENDAR_ID = "primary"
+  MIGRATIONS_SOURCE = "file:///app/migrations"
+
+[processes]
+  app = "./life-os-bot"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

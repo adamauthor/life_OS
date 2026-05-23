@@ -221,10 +221,12 @@ Reply in one message. The bot will:
 - `/start`: start bot.
 - `/help`: list commands.
 - `/capture`: prompt for memory capture.
-- `/schedule`: show today schedule.
+- `/schedule`: show today calendar events.
 - `/replan`: explicitly request day replanning.
-- `/today`: show today schedule.
+- `/today`: show adaptive daily direction.
 - `/review`: start daily review.
+- `/weekly`: build weekly review.
+- `/patterns`: show active behavioral patterns.
 - `/search`: search memory.
 - `/settings`: show current settings guidance.
 

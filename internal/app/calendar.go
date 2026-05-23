@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"life_os/internal/domain"
@@ -11,8 +12,8 @@ import (
 
 type CalendarRepository interface {
 	CreateCalendarAction(ctx context.Context, action domain.CalendarAction) (domain.CalendarAction, error)
-	GetCalendarAction(ctx context.Context, id int64) (domain.CalendarAction, error)
-	UpdateCalendarActionStatus(ctx context.Context, id int64, status domain.CalendarActionStatus) error
+	GetCalendarAction(ctx context.Context, userID domain.UUID, id int64) (domain.CalendarAction, error)
+	UpdateCalendarActionStatus(ctx context.Context, userID domain.UUID, id int64, status domain.CalendarActionStatus) error
 }
 
 type CalendarClient interface {
@@ -30,7 +31,7 @@ func NewCalendarService(repository CalendarRepository, calendar CalendarClient) 
 	return &CalendarService{repository: repository, calendar: calendar}
 }
 
-func (s *CalendarService) ProposeEvent(ctx context.Context, parsed domain.ParsedIntent) (domain.CalendarAction, error) {
+func (s *CalendarService) ProposeEvent(ctx context.Context, userID domain.UUID, parsed domain.ParsedIntent) (domain.CalendarAction, error) {
 	start, err := parsed.EventTime()
 	if err != nil {
 		return domain.CalendarAction{}, fmt.Errorf("parse event time: %w", err)
@@ -41,6 +42,7 @@ func (s *CalendarService) ProposeEvent(ctx context.Context, parsed domain.Parsed
 	}
 
 	return s.repository.CreateCalendarAction(ctx, domain.CalendarAction{
+		UserID:     userID,
 		ActionType: "create_event",
 		Status:     domain.CalendarActionStatusPending,
 		ProposedPayload: map[string]any{
@@ -52,8 +54,8 @@ func (s *CalendarService) ProposeEvent(ctx context.Context, parsed domain.Parsed
 	})
 }
 
-func (s *CalendarService) ConfirmAction(ctx context.Context, id int64) (string, error) {
-	action, err := s.repository.GetCalendarAction(ctx, id)
+func (s *CalendarService) ConfirmAction(ctx context.Context, userID domain.UUID, id int64) (string, error) {
+	action, err := s.repository.GetCalendarAction(ctx, userID, id)
 	if err != nil {
 		return "", fmt.Errorf("get calendar action: %w", err)
 	}
@@ -64,23 +66,23 @@ func (s *CalendarService) ConfirmAction(ctx context.Context, id int64) (string, 
 		return "", fmt.Errorf("calendar adapter is not configured")
 	}
 
-	if err := s.repository.UpdateCalendarActionStatus(ctx, id, domain.CalendarActionStatusConfirmed); err != nil {
+	if err := s.repository.UpdateCalendarActionStatus(ctx, userID, id, domain.CalendarActionStatusConfirmed); err != nil {
 		return "", fmt.Errorf("confirm calendar action: %w", err)
 	}
 
 	result, err := s.applyAction(ctx, action)
 	if err != nil {
-		_ = s.repository.UpdateCalendarActionStatus(ctx, id, domain.CalendarActionStatusFailed)
+		_ = s.repository.UpdateCalendarActionStatus(ctx, userID, id, domain.CalendarActionStatusFailed)
 		return "", err
 	}
-	if err := s.repository.UpdateCalendarActionStatus(ctx, id, domain.CalendarActionStatusApplied); err != nil {
+	if err := s.repository.UpdateCalendarActionStatus(ctx, userID, id, domain.CalendarActionStatusApplied); err != nil {
 		return "", fmt.Errorf("mark calendar action applied: %w", err)
 	}
 	return result, nil
 }
 
-func (s *CalendarService) CancelAction(ctx context.Context, id int64) error {
-	return s.repository.UpdateCalendarActionStatus(ctx, id, domain.CalendarActionStatusCancelled)
+func (s *CalendarService) CancelAction(ctx context.Context, userID domain.UUID, id int64) error {
+	return s.repository.UpdateCalendarActionStatus(ctx, userID, id, domain.CalendarActionStatusCancelled)
 }
 
 func (s *CalendarService) ListDay(ctx context.Context, day time.Time) ([]CalendarEvent, error) {
@@ -90,13 +92,81 @@ func (s *CalendarService) ListDay(ctx context.Context, day time.Time) ([]Calenda
 	return s.calendar.ListEvents(ctx, day)
 }
 
-func (s *CalendarService) ProposeReplan(ctx context.Context, proposal ReplanProposal) (domain.CalendarAction, error) {
+func (s *CalendarService) ApplyCalendarActions(ctx context.Context, actions []domain.ReplanCalendarAction) (string, error) {
+	writable := 0
+	for _, action := range actions {
+		if action.CalendarWrite {
+			writable++
+		}
+	}
+	if writable == 0 {
+		return "no calendar changes", nil
+	}
+	if s.calendar == nil {
+		return "", fmt.Errorf("calendar adapter is not configured")
+	}
+
+	applied := 0
+	for _, action := range actions {
+		if !action.CalendarWrite {
+			continue
+		}
+		actionType := strings.ToLower(strings.TrimSpace(action.Action))
+		if actionType == "" {
+			actionType = "create"
+		}
+		start, err := time.Parse(time.RFC3339, action.Start)
+		if err != nil {
+			return "", fmt.Errorf("parse calendar action start: %w", err)
+		}
+		end, err := replanActionEnd(action, start)
+		if err != nil {
+			return "", err
+		}
+		switch actionType {
+		case "create", "create_event":
+			duration := int(end.Sub(start).Minutes())
+			if duration <= 0 {
+				duration = action.DurationMinutes
+			}
+			if duration <= 0 {
+				duration = 60
+			}
+			if _, err := s.calendar.CreateEvent(ctx, CreateCalendarEventInput{
+				Title:           action.Title,
+				Start:           start,
+				DurationMinutes: duration,
+			}); err != nil {
+				return "", fmt.Errorf("create planned calendar event: %w", err)
+			}
+			applied++
+		case "update", "update_event":
+			if strings.TrimSpace(action.SourceEventID) == "" {
+				return "", fmt.Errorf("update calendar action requires source_event_id")
+			}
+			if err := s.calendar.UpdateEvent(ctx, action.SourceEventID, UpdateCalendarEventInput{
+				Title: action.Title,
+				Start: start,
+				End:   end,
+			}); err != nil {
+				return "", fmt.Errorf("update planned calendar event: %w", err)
+			}
+			applied++
+		default:
+			return "", fmt.Errorf("unsupported replan calendar action %q", action.Action)
+		}
+	}
+	return fmt.Sprintf("applied %d calendar changes", applied), nil
+}
+
+func (s *CalendarService) ProposeReplan(ctx context.Context, userID domain.UUID, proposal ReplanProposal) (domain.CalendarAction, error) {
 	payload := map[string]any{
 		"summary": proposal.Summary,
 		"events":  proposal.Events,
 		"notes":   proposal.Notes,
 	}
 	return s.repository.CreateCalendarAction(ctx, domain.CalendarAction{
+		UserID:          userID,
 		ActionType:      "replan_day",
 		Status:          domain.CalendarActionStatusPending,
 		ProposedPayload: payload,
@@ -200,4 +270,19 @@ func replanProposalFromPayload(payload map[string]any) (ReplanProposal, error) {
 		return ReplanProposal{}, fmt.Errorf("unmarshal replan payload: %w", err)
 	}
 	return proposal, nil
+}
+
+func replanActionEnd(action domain.ReplanCalendarAction, start time.Time) (time.Time, error) {
+	if strings.TrimSpace(action.End) != "" {
+		end, err := time.Parse(time.RFC3339, action.End)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parse calendar action end: %w", err)
+		}
+		return end, nil
+	}
+	duration := action.DurationMinutes
+	if duration <= 0 {
+		duration = 60
+	}
+	return start.Add(time.Duration(duration) * time.Minute), nil
 }

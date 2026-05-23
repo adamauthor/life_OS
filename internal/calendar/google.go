@@ -29,15 +29,26 @@ func NewGoogleClient(ctx context.Context, credentialsFile string, tokenFile stri
 	if err != nil {
 		return nil, fmt.Errorf("read google credentials: %w", err)
 	}
-	config, err := google.ConfigFromJSON(credentials, gcalendar.CalendarScope)
-	if err != nil {
-		return nil, fmt.Errorf("parse google credentials: %w", err)
-	}
 	token, err := tokenFromFile(tokenFile)
 	if err != nil {
 		return nil, err
 	}
-	httpClient := config.Client(ctx, token)
+	return NewGoogleClientFromJSON(ctx, string(credentials), tokenJSON(token), calendarID)
+}
+
+func NewGoogleClientFromJSON(ctx context.Context, credentialsJSON string, tokenJSONString string, calendarID string) (*GoogleClient, error) {
+	if credentialsJSON == "" || tokenJSONString == "" {
+		return nil, fmt.Errorf("google credentials and token JSON are required")
+	}
+	config, err := google.ConfigFromJSON([]byte(credentialsJSON), gcalendar.CalendarScope)
+	if err != nil {
+		return nil, fmt.Errorf("parse google credentials: %w", err)
+	}
+	var token oauth2.Token
+	if err := json.Unmarshal([]byte(tokenJSONString), &token); err != nil {
+		return nil, fmt.Errorf("decode google token JSON: %w", err)
+	}
+	httpClient := config.Client(ctx, &token)
 	service, err := gcalendar.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("create google calendar service: %w", err)
@@ -46,6 +57,17 @@ func NewGoogleClient(ctx context.Context, credentialsFile string, tokenFile stri
 		calendarID = "primary"
 	}
 	return &GoogleClient{calendarID: calendarID, service: service}, nil
+}
+
+func tokenJSON(token *oauth2.Token) string {
+	if token == nil {
+		return ""
+	}
+	bytes, err := json.Marshal(token)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
 }
 
 func (c *GoogleClient) CreateEvent(ctx context.Context, input app.CreateCalendarEventInput) (string, error) {

@@ -19,7 +19,7 @@ Use one Go service for the MVP:
 - `internal/review`: daily, weekly, and monthly review flows.
 - `internal/profile`: user profile, rules, goals, and scheduling preferences.
 - `internal/storage`: PostgreSQL connection, repositories, and transactions.
-- `migrations`: SQL schema managed as plain forward migrations.
+- `migrations`: SQL schema managed by `golang-migrate` up/down migrations.
 
 Keep it a modular monolith. Microservices, agent frameworks, and LangChain are explicitly out of scope.
 

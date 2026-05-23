@@ -24,11 +24,11 @@ func (r *fakeCalendarRepository) CreateCalendarAction(_ context.Context, action 
 	return action, nil
 }
 
-func (r *fakeCalendarRepository) GetCalendarAction(_ context.Context, id int64) (domain.CalendarAction, error) {
+func (r *fakeCalendarRepository) GetCalendarAction(_ context.Context, _ domain.UUID, id int64) (domain.CalendarAction, error) {
 	return r.actions[id], nil
 }
 
-func (r *fakeCalendarRepository) UpdateCalendarActionStatus(_ context.Context, id int64, status domain.CalendarActionStatus) error {
+func (r *fakeCalendarRepository) UpdateCalendarActionStatus(_ context.Context, _ domain.UUID, id int64, status domain.CalendarActionStatus) error {
 	action := r.actions[id]
 	action.Status = status
 	r.actions[id] = action
@@ -59,7 +59,8 @@ func TestConfirmReplanSkipsFixedAndAppliesChanges(t *testing.T) {
 	calendar := &fakeCalendarClient{}
 	service := NewCalendarService(repository, calendar)
 
-	action, err := service.ProposeReplan(context.Background(), ReplanProposal{
+	userID := domain.UserIDFromTelegram(123)
+	action, err := service.ProposeReplan(context.Background(), userID, ReplanProposal{
 		Summary: "test replan",
 		Events: []ReplanProposalItem{
 			{SourceEventID: "fixed", Title: "Fixed", Start: "2026-05-23T10:00:00+07:00", End: "2026-05-23T11:00:00+07:00", IsFixed: true, Action: "keep"},
@@ -71,7 +72,7 @@ func TestConfirmReplanSkipsFixedAndAppliesChanges(t *testing.T) {
 		t.Fatalf("ProposeReplan returned error: %v", err)
 	}
 
-	result, err := service.ConfirmAction(context.Background(), action.ID)
+	result, err := service.ConfirmAction(context.Background(), userID, action.ID)
 	if err != nil {
 		t.Fatalf("ConfirmAction returned error: %v", err)
 	}

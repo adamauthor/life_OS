@@ -30,8 +30,8 @@ func (r *MemoryRepository) CreateMemory(ctx context.Context, memory domain.Memor
 	}
 
 	const query = `
-		insert into memories (type, raw_text, summary, tags, source, embedding, metadata_json)
-		values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		insert into memories (user_id, type, raw_text, summary, tags, source, embedding, metadata_json)
+		values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
 		returning id, created_at
 	`
 
@@ -43,6 +43,7 @@ func (r *MemoryRepository) CreateMemory(ctx context.Context, memory domain.Memor
 	if err := r.db.QueryRow(
 		ctx,
 		query,
+		memory.UserID,
 		string(memory.Type),
 		memory.RawText,
 		memory.Summary,
@@ -57,19 +58,20 @@ func (r *MemoryRepository) CreateMemory(ctx context.Context, memory domain.Memor
 	return memory, nil
 }
 
-func (r *MemoryRepository) SearchMemories(ctx context.Context, queryEmbedding []float32, limit int) ([]domain.Memory, error) {
+func (r *MemoryRepository) SearchMemories(ctx context.Context, userID domain.UUID, queryEmbedding []float32, limit int) ([]domain.Memory, error) {
 	if limit <= 0 {
 		limit = 6
 	}
 	const query = `
-		select id, type, raw_text, summary, tags, source, created_at, metadata_json
+		select id, user_id, type, raw_text, summary, tags, source, created_at, metadata_json
 		from memories
-		where embedding is not null
-		order by embedding <-> $1
-		limit $2
+		where user_id = $1
+		  and embedding is not null
+		order by embedding <-> $2
+		limit $3
 	`
 
-	rows, err := r.query(ctx, query, pgvector.NewVector(queryEmbedding), limit)
+	rows, err := r.query(ctx, query, userID, pgvector.NewVector(queryEmbedding), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query memories: %w", err)
 	}
@@ -82,6 +84,7 @@ func (r *MemoryRepository) SearchMemories(ctx context.Context, queryEmbedding []
 		var metadataBytes []byte
 		if err := rows.Scan(
 			&memory.ID,
+			&memory.UserID,
 			&memoryType,
 			&memory.RawText,
 			&memory.Summary,

@@ -23,6 +23,7 @@ func TestMemoryRepositoryCreateMemoryIntegration(t *testing.T) {
 
 	repository := NewMemoryRepository(postgres.Pool)
 	memory, err := domain.NewMemory(domain.NewMemoryInput{
+		UserID:    domain.UserIDFromTelegram(123),
 		RawText:   "integration memory",
 		Tags:      []string{"test", "memory"},
 		Source:    "telegram",
@@ -52,7 +53,7 @@ func TestMemoryRepositoryCreateMemoryIntegration(t *testing.T) {
 		t.Fatal("saved.CreatedAt is zero")
 	}
 
-	found, err := repository.SearchMemories(ctx, make([]float32, 1536), 1)
+	found, err := repository.SearchMemories(ctx, memory.UserID, make([]float32, 1536), 1)
 	if err != nil {
 		t.Fatalf("SearchMemories returned error: %v", err)
 	}

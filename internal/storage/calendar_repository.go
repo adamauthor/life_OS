@@ -23,27 +23,29 @@ func (r *CalendarActionRepository) CreateCalendarAction(ctx context.Context, act
 		return domain.CalendarAction{}, fmt.Errorf("marshal calendar action payload: %w", err)
 	}
 	const query = `
-		insert into calendar_actions (action_type, status, proposed_payload)
-		values ($1, $2, $3::jsonb)
+		insert into calendar_actions (user_id, action_type, status, proposed_payload)
+		values ($1, $2, $3, $4::jsonb)
 		returning id, created_at
 	`
-	if err := r.db.QueryRow(ctx, query, action.ActionType, string(action.Status), string(payload)).Scan(&action.ID, &action.CreatedAt); err != nil {
+	if err := r.db.QueryRow(ctx, query, action.UserID, action.ActionType, string(action.Status), string(payload)).Scan(&action.ID, &action.CreatedAt); err != nil {
 		return domain.CalendarAction{}, fmt.Errorf("insert calendar action: %w", err)
 	}
 	return action, nil
 }
 
-func (r *CalendarActionRepository) GetCalendarAction(ctx context.Context, id int64) (domain.CalendarAction, error) {
+func (r *CalendarActionRepository) GetCalendarAction(ctx context.Context, userID domain.UUID, id int64) (domain.CalendarAction, error) {
 	const query = `
-		select id, action_type, status, proposed_payload, confirmed_at, created_at
+		select id, user_id, action_type, status, proposed_payload, confirmed_at, created_at
 		from calendar_actions
-		where id = $1
+		where user_id = $1
+		  and id = $2
 	`
 	var action domain.CalendarAction
 	var status string
 	var payloadBytes []byte
-	if err := r.db.QueryRow(ctx, query, id).Scan(
+	if err := r.db.QueryRow(ctx, query, userID, id).Scan(
 		&action.ID,
+		&action.UserID,
 		&action.ActionType,
 		&status,
 		&payloadBytes,
@@ -59,14 +61,15 @@ func (r *CalendarActionRepository) GetCalendarAction(ctx context.Context, id int
 	return action, nil
 }
 
-func (r *CalendarActionRepository) UpdateCalendarActionStatus(ctx context.Context, id int64, status domain.CalendarActionStatus) error {
+func (r *CalendarActionRepository) UpdateCalendarActionStatus(ctx context.Context, userID domain.UUID, id int64, status domain.CalendarActionStatus) error {
 	const query = `
 		update calendar_actions
 		set status = $2,
 		    confirmed_at = case when $2 = 'confirmed' then $3 else confirmed_at end
 		where id = $1
+		  and user_id = $4
 	`
-	if _, err := r.exec(ctx, query, id, string(status), time.Now()); err != nil {
+	if _, err := r.exec(ctx, query, id, string(status), time.Now(), userID); err != nil {
 		return fmt.Errorf("update calendar action status: %w", err)
 	}
 	return nil
