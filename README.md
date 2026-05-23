@@ -20,6 +20,9 @@ go run ./cmd/bot
 Environment example: `.env.example`.
 
 User guide: `docs/user-guide.md`.
+Runbook: `docs/runbook.md`.
+BotFather setup: `docs/botfather.md`.
+Roadmap and risks: `docs/roadmap-and-risks.md`.
 
 Google Calendar is enabled when both files are configured:
 

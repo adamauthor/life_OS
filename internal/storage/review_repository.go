@@ -20,6 +20,9 @@ func NewDailyReviewRepository(db DB) *DailyReviewRepository {
 }
 
 func (r *DailyReviewRepository) SaveDailyReview(ctx context.Context, review domain.DailyReview) (domain.DailyReview, error) {
+	if review.UserID == (domain.UUID{}) {
+		review.UserID = domain.UserIDFromTelegram(0)
+	}
 	reviewDate := review.ReviewDate
 	if reviewDate.IsZero() {
 		reviewDate = review.Date
