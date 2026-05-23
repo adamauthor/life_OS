@@ -142,7 +142,6 @@ func TestRouteTextCommands(t *testing.T) {
 		"/help":     "Команды:",
 		"/capture":  "Пришли мысль",
 		"/schedule": "Календарь не настроен.",
-		"/replan":   "Принял запрос",
 		"/today":    "Календарь не настроен.",
 		"/review":   "Короткое ревью дня:",
 		"/search":   "Напиши так:",
@@ -157,6 +156,10 @@ func TestRouteTextCommands(t *testing.T) {
 				t.Fatalf("routeText(%q) = %q, want substring %q", input, got, wantContains)
 			}
 		})
+	}
+
+	if got := bot.routeText(context.Background(), &telegram.Message{Text: "/replan"}); got != "" {
+		t.Fatalf("routeText(\"/replan\") = %q, want empty response because handleReplan sends the user-facing result", got)
 	}
 }
 

@@ -207,6 +207,24 @@ Check production migration version:
 fly ssh console --app <app-name> -C './life-os-migrate version'
 ```
 
+## CI/CD
+
+GitHub Actions uses one `CI/CD` workflow.
+
+Pipeline order:
+
+1. Format, module, vet, race tests, and Go build.
+2. Postgres + pgvector migrations and storage integration test.
+3. Docker image build.
+4. Fly deploy.
+5. Fly status check.
+
+Deploy rules:
+
+- pull requests do not deploy;
+- pushes to `main` deploy only when GitHub variable `FLY_DEPLOY_ENABLED=true`;
+- manual dispatch deploys after the same checks pass.
+
 ## Data Safety
 
 Per-user scoped data:

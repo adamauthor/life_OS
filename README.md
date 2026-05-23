@@ -92,6 +92,17 @@ DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
 go test ./internal/storage -run TestMemoryRepositoryCreateMemoryIntegration -count=1
 ```
 
+## CI/CD
+
+GitHub Actions runs one `CI/CD` pipeline:
+
+1. `gofmt`, `go mod tidy` diff check, `go vet`, race tests, and `go build`.
+2. PostgreSQL + pgvector migrations and storage integration test.
+3. Docker image build.
+4. Fly deploy after all checks pass.
+
+Pushes to `main` deploy only when repository variable `FLY_DEPLOY_ENABLED=true`; manual workflow dispatch also deploys after checks pass.
+
 ## Documentation
 
 - [User guide](docs/user-guide.md)

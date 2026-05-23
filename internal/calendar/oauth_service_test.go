@@ -34,6 +34,10 @@ func (r *fakeOAuthRepository) SaveGoogleCalendarConnection(_ context.Context, _ 
 	return nil
 }
 
+func (r *fakeOAuthRepository) UpdateGoogleCalendarToken(_ context.Context, _ domain.UUID, _ string) error {
+	return nil
+}
+
 func (r *fakeOAuthRepository) GetGoogleCalendarConnection(_ context.Context, _ domain.UUID) (domain.GoogleCalendarConnection, error) {
 	return domain.GoogleCalendarConnection{}, nil
 }

@@ -184,7 +184,7 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 		return b.today(ctx, msg)
 	case "/replan":
 		b.handleReplan(ctx, msg)
-		return "Принял запрос на перепланирование."
+		return ""
 	case "/review":
 		b.pendingReviews[userID(msg)] = time.Now().In(b.timezone)
 		if b.reviewV2 != nil {
@@ -579,6 +579,9 @@ func (b *Bot) handleCallback(ctx context.Context, update telegram.Update) {
 	case "cancel":
 		if err := b.calendar.CancelAction(ctx, domain.UserIDFromTelegram(callbackUserID(callback)), id); err != nil {
 			b.logger.Error("failed to cancel calendar action", "error", err, "action_id", id)
+			_ = b.client.AnswerCallback(ctx, callback.ID, "Ошибка")
+			_ = b.client.SendMessage(ctx, chatID, "Не отменил действие: "+err.Error())
+			return
 		}
 		_ = b.client.AnswerCallback(ctx, callback.ID, "Отменено")
 		_ = b.client.SendMessage(ctx, chatID, "Ок, не добавляю.")
@@ -600,32 +603,32 @@ func (b *Bot) handleNotificationCallback(ctx context.Context, callback *telegram
 	}
 	userUUID := domain.UserIDFromTelegram(callbackUserID(callback))
 	chatID := callbackChatID(callback)
+	answerText := ""
 
 	switch action {
 	case "done":
 		err = b.notifications.MarkDone(ctx, userUUID, notificationID)
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Отмечено")
+		answerText = "Отмечено"
 	case "skip":
 		err = b.notifications.MarkSkipped(ctx, userUUID, notificationID)
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Пропущено")
+		answerText = "Пропущено"
 	case "snooze30":
 		err = b.notifications.Snooze(ctx, userUUID, notificationID, 30*time.Minute)
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Отложено на 30 минут")
+		answerText = "Отложено на 30 минут"
 	case "snooze120":
 		err = b.notifications.Snooze(ctx, userUUID, notificationID, 2*time.Hour)
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Отложено на 2 часа")
+		answerText = "Отложено на 2 часа"
 	case "review":
 		err = b.notifications.MarkDone(ctx, userUUID, notificationID)
 		if err == nil {
 			b.pendingReviews[callbackUserID(callback)] = time.Now().In(b.timezone)
 			_ = b.client.SendMessage(ctx, chatID, dailyReviewQuestions())
 		}
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Review")
+		answerText = "Review"
 	case "replan":
 		proposal, buildErr := b.notifications.BuildReplanFromNotification(ctx, userUUID, notificationID)
 		if buildErr != nil {
 			err = buildErr
-			_ = b.client.AnswerCallback(ctx, callback.ID, "Ошибка")
 			break
 		}
 		text := formatAdaptiveReplanProposal(*proposal)
@@ -634,14 +637,19 @@ func (b *Bot) handleNotificationCallback(ctx context.Context, callback *telegram
 			{Text: "Изменить", Data: fmt.Sprintf("replan_edit:%s", proposal.ID.String())},
 			{Text: "Отклонить", Data: fmt.Sprintf("replan_cancel:%s", proposal.ID.String())},
 		})
-		_ = b.client.AnswerCallback(ctx, callback.ID, "Replan готов")
+		answerText = "Replan готов"
 	default:
 		_ = b.client.AnswerCallback(ctx, callback.ID, "Неизвестное действие")
 		return
 	}
 	if err != nil {
 		b.logger.Error("failed to handle notification callback", "error", err, "action", action, "notification_id", notificationID.String())
+		_ = b.client.AnswerCallback(ctx, callback.ID, "Ошибка")
 		_ = b.client.SendMessage(ctx, chatID, "Не применил действие: "+err.Error())
+		return
+	}
+	if answerText != "" {
+		_ = b.client.AnswerCallback(ctx, callback.ID, answerText)
 	}
 }
 
@@ -675,6 +683,9 @@ func (b *Bot) handleReplanCallback(ctx context.Context, callback *telegram.Callb
 	case "replan_cancel":
 		if err := b.planning.CancelReplanForUser(ctx, domain.UserIDFromTelegram(callbackUserID(callback)), proposalID); err != nil {
 			b.logger.Error("failed to cancel replan", "error", err, "proposal_id", proposalID.String())
+			_ = b.client.AnswerCallback(ctx, callback.ID, "Ошибка")
+			_ = b.client.SendMessage(ctx, chatID, "Не отменил replan: "+err.Error())
+			return
 		}
 		_ = b.client.AnswerCallback(ctx, callback.ID, "Отклонено")
 		_ = b.client.SendMessage(ctx, chatID, "Ок, изменения в календаре не применяю.")

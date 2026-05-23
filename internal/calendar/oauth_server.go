@@ -70,6 +70,11 @@ func (s *OAuthHTTPServer) handleCallback(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if oauthErr := r.URL.Query().Get("error"); oauthErr != "" {
+		s.logger.Error("google oauth callback rejected", "error", oauthErr)
+		http.Error(w, "Calendar connection was not approved. Return to Telegram and run /connect_calendar again.", http.StatusBadRequest)
+		return
+	}
 	result, err := s.service.HandleCallback(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("code"))
 	if err != nil {
 		s.logger.Error("google oauth callback failed", "error", err)

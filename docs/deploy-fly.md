@@ -131,7 +131,7 @@ Fly runs:
 
 as `release_command`. If migrations fail, Fly does not roll out the new version.
 
-## 8. GitHub Actions Deploy
+## 8. GitHub Actions CI/CD
 
 Create Fly deploy token:
 
@@ -146,9 +146,14 @@ In GitHub `Settings -> Secrets and variables -> Actions`:
 
 Workflow behavior:
 
-- `CI` runs `go test ./...` and Docker build.
-- `Fly Deploy` can be started manually.
+- One `CI/CD` workflow runs on pull requests, pushes to `main`/`master`, and manual dispatch.
+- `Format, Vet, Unit Tests` runs `gofmt`, `go mod tidy` diff check, `go vet ./...`, `go test -race ./...`, and `go build ./...`.
+- `Migrations And Postgres Integration` starts `pgvector/pgvector:pg16`, runs migrations, checks migration version, runs storage integration tests, and verifies the latest down/up migration.
+- `Docker Build` runs only after both test jobs pass.
+- `Deploy To Fly` runs only after Docker build passes.
 - Pushes to `main` deploy only when `FLY_DEPLOY_ENABLED=true`.
+- Manual dispatch can deploy without changing `FLY_DEPLOY_ENABLED`.
+- After deploy, the workflow runs `flyctl status`.
 
 ## 9. Smoke Test
 

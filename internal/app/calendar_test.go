@@ -90,6 +90,38 @@ func TestConfirmReplanSkipsFixedAndAppliesChanges(t *testing.T) {
 	}
 }
 
+func TestApplyCalendarActionsValidatesBeforeWriting(t *testing.T) {
+	repository := newFakeCalendarRepository()
+	calendar := &fakeCalendarClient{}
+	service := NewCalendarService(repository, calendar)
+
+	_, err := service.ApplyCalendarActions(context.Background(), []domain.ReplanCalendarAction{
+		{
+			Action:          "create",
+			Title:           "Deep work",
+			Start:           "2026-05-23T14:00:00+07:00",
+			DurationMinutes: 60,
+			CalendarWrite:   true,
+		},
+		{
+			Action:          "update",
+			Title:           "Move meeting",
+			Start:           "2026-05-23T16:00:00+07:00",
+			DurationMinutes: 60,
+			CalendarWrite:   true,
+		},
+	})
+	if err == nil {
+		t.Fatal("ApplyCalendarActions returned nil error for invalid update")
+	}
+	if calendar.created != 0 {
+		t.Fatalf("created = %d, want 0 because validation must happen before writes", calendar.created)
+	}
+	if len(calendar.updated) != 0 {
+		t.Fatalf("updated = %#v, want no writes", calendar.updated)
+	}
+}
+
 func TestRestrictedCalendarBlocksOtherUsers(t *testing.T) {
 	repository := newFakeCalendarRepository()
 	calendar := &fakeCalendarClient{}

@@ -405,9 +405,14 @@ func (r *NotificationRepository) MarkNotificationActioned(ctx context.Context, u
 		    updated_at = now()
 		where user_id = $1
 		  and id = $2
+		  and status in ('pending', 'sending', 'sent')
 	`
-	if _, err := r.exec(ctx, query, userID, notificationID, string(status)); err != nil {
+	tag, err := r.exec(ctx, query, userID, notificationID, string(status))
+	if err != nil {
 		return fmt.Errorf("mark notification actioned: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("scheduled notification not found")
 	}
 	return nil
 }
@@ -423,9 +428,14 @@ func (r *NotificationRepository) SnoozeNotification(ctx context.Context, userID 
 		    updated_at = now()
 		where user_id = $1
 		  and id = $2
+		  and status in ('pending', 'sending', 'sent')
 	`
-	if _, err := r.exec(ctx, query, userID, notificationID, dueAt); err != nil {
+	tag, err := r.exec(ctx, query, userID, notificationID, dueAt)
+	if err != nil {
 		return fmt.Errorf("snooze notification: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("scheduled notification not found")
 	}
 	return nil
 }

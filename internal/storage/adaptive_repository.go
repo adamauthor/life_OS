@@ -144,9 +144,20 @@ func (r *AdaptiveRepository) UpdateReplanProposalStatus(ctx context.Context, pro
 		set status = $2,
 		    confirmed_at = coalesce($3, confirmed_at)
 		where id = $1
+		  and (
+		      case
+		          when $2 in ('confirmed', 'cancelled') then status = 'pending'
+		          when $2 in ('applied', 'failed') then status = 'confirmed'
+		          else true
+		      end
+		  )
 	`
-	if _, err := r.exec(ctx, query, proposalID, status, confirmedAt); err != nil {
+	tag, err := r.exec(ctx, query, proposalID, status, confirmedAt)
+	if err != nil {
 		return fmt.Errorf("update replan proposal status: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("replan proposal not found or status transition is invalid")
 	}
 	return nil
 }
@@ -158,9 +169,20 @@ func (r *AdaptiveRepository) UpdateReplanProposalStatusForUser(ctx context.Conte
 		    confirmed_at = coalesce($4, confirmed_at)
 		where user_id = $1
 		  and id = $2
+		  and (
+		      case
+		          when $3 in ('confirmed', 'cancelled') then status = 'pending'
+		          when $3 in ('applied', 'failed') then status = 'confirmed'
+		          else true
+		      end
+		  )
 	`
-	if _, err := r.exec(ctx, query, userID, proposalID, status, confirmedAt); err != nil {
+	tag, err := r.exec(ctx, query, userID, proposalID, status, confirmedAt)
+	if err != nil {
 		return fmt.Errorf("update user replan proposal status: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("replan proposal not found or status transition is invalid")
 	}
 	return nil
 }

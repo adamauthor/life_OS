@@ -183,8 +183,17 @@ func hasWritableCalendarActions(actions []domain.ReplanCalendarAction) bool {
 	return writable > 0
 }
 
-func (s *CalendarService) applyCalendarActions(ctx context.Context, calendarClient CalendarClient, actions []domain.ReplanCalendarAction) (string, error) {
-	applied := 0
+type preparedReplanCalendarAction struct {
+	actionType      string
+	sourceEventID   string
+	title           string
+	start           time.Time
+	end             time.Time
+	durationMinutes int
+}
+
+func prepareReplanCalendarActions(actions []domain.ReplanCalendarAction) ([]preparedReplanCalendarAction, error) {
+	prepared := make([]preparedReplanCalendarAction, 0, len(actions))
 	for _, action := range actions {
 		if !action.CalendarWrite {
 			continue
@@ -193,45 +202,73 @@ func (s *CalendarService) applyCalendarActions(ctx context.Context, calendarClie
 		if actionType == "" {
 			actionType = "create"
 		}
+		switch actionType {
+		case "create", "create_event", "update", "update_event":
+		default:
+			return nil, fmt.Errorf("unsupported replan calendar action %q", action.Action)
+		}
+
 		start, err := time.Parse(time.RFC3339, action.Start)
 		if err != nil {
-			return "", fmt.Errorf("parse calendar action start: %w", err)
+			return nil, fmt.Errorf("parse calendar action start: %w", err)
 		}
 		end, err := replanActionEnd(action, start)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		switch actionType {
+		duration := int(end.Sub(start).Minutes())
+		if duration <= 0 {
+			duration = action.DurationMinutes
+		}
+		if duration <= 0 {
+			duration = 60
+		}
+		if actionType == "update" || actionType == "update_event" {
+			if strings.TrimSpace(action.SourceEventID) == "" {
+				return nil, fmt.Errorf("update calendar action requires source_event_id")
+			}
+			if !end.After(start) {
+				end = start.Add(time.Duration(duration) * time.Minute)
+			}
+		}
+		prepared = append(prepared, preparedReplanCalendarAction{
+			actionType:      actionType,
+			sourceEventID:   strings.TrimSpace(action.SourceEventID),
+			title:           action.Title,
+			start:           start,
+			end:             end,
+			durationMinutes: duration,
+		})
+	}
+	return prepared, nil
+}
+
+func (s *CalendarService) applyCalendarActions(ctx context.Context, calendarClient CalendarClient, actions []domain.ReplanCalendarAction) (string, error) {
+	prepared, err := prepareReplanCalendarActions(actions)
+	if err != nil {
+		return "", err
+	}
+	applied := 0
+	for _, action := range prepared {
+		switch action.actionType {
 		case "create", "create_event":
-			duration := int(end.Sub(start).Minutes())
-			if duration <= 0 {
-				duration = action.DurationMinutes
-			}
-			if duration <= 0 {
-				duration = 60
-			}
 			if _, err := calendarClient.CreateEvent(ctx, CreateCalendarEventInput{
-				Title:           action.Title,
-				Start:           start,
-				DurationMinutes: duration,
+				Title:           action.title,
+				Start:           action.start,
+				DurationMinutes: action.durationMinutes,
 			}); err != nil {
 				return "", fmt.Errorf("create planned calendar event: %w", err)
 			}
 			applied++
 		case "update", "update_event":
-			if strings.TrimSpace(action.SourceEventID) == "" {
-				return "", fmt.Errorf("update calendar action requires source_event_id")
-			}
-			if err := calendarClient.UpdateEvent(ctx, action.SourceEventID, UpdateCalendarEventInput{
-				Title: action.Title,
-				Start: start,
-				End:   end,
+			if err := calendarClient.UpdateEvent(ctx, action.sourceEventID, UpdateCalendarEventInput{
+				Title: action.title,
+				Start: action.start,
+				End:   action.end,
 			}); err != nil {
 				return "", fmt.Errorf("update planned calendar event: %w", err)
 			}
 			applied++
-		default:
-			return "", fmt.Errorf("unsupported replan calendar action %q", action.Action)
 		}
 	}
 	return fmt.Sprintf("applied %d calendar changes", applied), nil

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ type OAuthRepository interface {
 	DeleteOAuthState(ctx context.Context, state string) error
 	DeleteExpiredOAuthStates(ctx context.Context, now time.Time) error
 	SaveGoogleCalendarConnection(ctx context.Context, connection domain.GoogleCalendarConnection) error
+	UpdateGoogleCalendarToken(ctx context.Context, userID domain.UUID, tokenJSON string) error
 	GetGoogleCalendarConnection(ctx context.Context, userID domain.UUID) (domain.GoogleCalendarConnection, error)
 	HasGoogleCalendarConnection(ctx context.Context, userID domain.UUID) (bool, error)
 	TouchGoogleCalendarConnection(ctx context.Context, userID domain.UUID) error
@@ -151,7 +153,25 @@ func (s *OAuthService) CalendarClientForUser(ctx context.Context, userID domain.
 	if err := json.Unmarshal(tokenBytes, &token); err != nil {
 		return nil, fmt.Errorf("decode stored google token: %w", err)
 	}
-	httpClient := s.config.Client(ctx, &token)
+	tokenSource := &persistingTokenSource{
+		source: s.config.TokenSource(ctx, &token),
+		last:   token,
+		save: func(refreshed *oauth2.Token) error {
+			tokenBytes, err := json.Marshal(refreshed)
+			if err != nil {
+				return fmt.Errorf("marshal refreshed google token: %w", err)
+			}
+			storedToken, err := s.encodeTokenJSON(tokenBytes)
+			if err != nil {
+				return err
+			}
+			if err := s.repository.UpdateGoogleCalendarToken(ctx, userID, storedToken); err != nil {
+				return fmt.Errorf("persist refreshed google token: %w", err)
+			}
+			return nil
+		},
+	}
+	httpClient := oauth2.NewClient(ctx, tokenSource)
 	service, err := gcalendar.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("create google calendar service: %w", err)
@@ -164,6 +184,37 @@ func (s *OAuthService) CalendarClientForUser(ctx context.Context, userID domain.
 		return nil, err
 	}
 	return &GoogleClient{calendarID: calendarID, service: service}, nil
+}
+
+type persistingTokenSource struct {
+	source oauth2.TokenSource
+	save   func(*oauth2.Token) error
+
+	mu   sync.Mutex
+	last oauth2.Token
+}
+
+func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
+	token, err := s.source.Token()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !sameOAuthToken(s.last, *token) {
+		if err := s.save(token); err != nil {
+			return nil, err
+		}
+		s.last = *token
+	}
+	return token, nil
+}
+
+func sameOAuthToken(left oauth2.Token, right oauth2.Token) bool {
+	return left.AccessToken == right.AccessToken &&
+		left.RefreshToken == right.RefreshToken &&
+		left.TokenType == right.TokenType &&
+		left.Expiry.Equal(right.Expiry)
 }
 
 func (s *OAuthService) IsCalendarConnected(ctx context.Context, userID domain.UUID) bool {

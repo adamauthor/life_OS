@@ -88,6 +88,27 @@ func (r *GoogleCalendarRepository) SaveGoogleCalendarConnection(ctx context.Cont
 	return nil
 }
 
+func (r *GoogleCalendarRepository) UpdateGoogleCalendarToken(ctx context.Context, userID domain.UUID, tokenJSON string) error {
+	if !json.Valid([]byte(tokenJSON)) {
+		return fmt.Errorf("google token JSON is invalid")
+	}
+	const query = `
+		update user_integrations
+		set token_json = $3::jsonb,
+		    updated_at = now()
+		where user_id = $1
+		  and provider = $2
+	`
+	tag, err := r.exec(ctx, query, userID, googleCalendarProvider, tokenJSON)
+	if err != nil {
+		return fmt.Errorf("update google calendar token: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("google calendar connection not found")
+	}
+	return nil
+}
+
 func (r *GoogleCalendarRepository) GetGoogleCalendarConnection(ctx context.Context, userID domain.UUID) (domain.GoogleCalendarConnection, error) {
 	const query = `
 		select id, user_id, calendar_id, token_json, connected_at, last_used_at, created_at, updated_at

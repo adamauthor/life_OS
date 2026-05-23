@@ -227,6 +227,9 @@ func (s *Service) Snooze(ctx context.Context, userID domain.UUID, notificationID
 }
 
 func (s *Service) BuildReplanFromNotification(ctx context.Context, userID domain.UUID, notificationID domain.UUID) (*domain.ReplanProposal, error) {
+	if s.planning == nil {
+		return nil, fmt.Errorf("planning service is not configured")
+	}
 	notification, err := s.repository.GetScheduledNotificationForUser(ctx, userID, notificationID)
 	if err != nil {
 		return nil, err
@@ -236,9 +239,6 @@ func (s *Service) BuildReplanFromNotification(ctx context.Context, userID domain
 	}
 	if err := s.logAction(ctx, userID, notificationID, notification.Kind, "replan_requested", ""); err != nil {
 		return nil, err
-	}
-	if s.planning == nil {
-		return nil, fmt.Errorf("planning service is not configured")
 	}
 	return s.planning.BuildReplanProposal(ctx, userID, "Автономный check-in показал, что день надо реалистично перестроить. Сохрани fixed events и предложи новый план.", time.Now().In(s.timezone))
 }

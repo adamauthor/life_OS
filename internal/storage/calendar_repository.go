@@ -68,9 +68,20 @@ func (r *CalendarActionRepository) UpdateCalendarActionStatus(ctx context.Contex
 		    confirmed_at = case when $2 = 'confirmed' then $3 else confirmed_at end
 		where id = $1
 		  and user_id = $4
+		  and (
+		      case
+		          when $2 in ('confirmed', 'cancelled') then status = 'pending'
+		          when $2 in ('applied', 'failed') then status = 'confirmed'
+		          else true
+		      end
+		  )
 	`
-	if _, err := r.exec(ctx, query, id, string(status), time.Now(), userID); err != nil {
+	tag, err := r.exec(ctx, query, id, string(status), time.Now(), userID)
+	if err != nil {
 		return fmt.Errorf("update calendar action status: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("calendar action not found")
 	}
 	return nil
 }
