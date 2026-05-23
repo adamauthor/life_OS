@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for life-os-friday on 2026-05-23T13:55:05Z
+# fly.toml app configuration file generated for life-os-friday on 2026-05-23T14:01:58Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -34,7 +34,8 @@ primary_region = 'sin'
   processes = ['app']
 
 [[vm]]
-  memory = '512mb'
+  memory = '256mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512
+  memory_mb = 256
+  size = 'shared-cpu-1x'
