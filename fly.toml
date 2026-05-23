@@ -13,8 +13,8 @@ primary_region = "sin"
   APP_TIMEZONE = "Asia/Ho_Chi_Minh"
   GOOGLE_CALENDAR_ID = "primary"
   HTTP_ADDR = ":8080"
-  # Set CALENDAR_OWNER_TELEGRAM_ID as a secret when enabling Google Calendar.
-  # Set GOOGLE_OAUTH_REDIRECT_URL to https://<app-name>.fly.dev/oauth/google/callback for per-user calendars.
+  # Set GOOGLE_OAUTH_REDIRECT_URL and GOOGLE_CREDENTIALS_JSON as secrets for per-user calendars.
+  # Set CALENDAR_TOKEN_ENCRYPTION_KEY before users connect calendars.
   MIGRATIONS_SOURCE = "file:///app/migrations"
   AUTONOMY_SCHEDULER_ENABLED = "true"
   AUTONOMY_DEFAULT_ENABLED = "false"

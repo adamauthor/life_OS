@@ -1,143 +1,91 @@
-# Life OS Runbook
+# Runbook
 
-## What This Bot Does
+## Current System
 
-The bot accepts text and voice messages, classifies intent, saves memories, searches memory, runs daily/weekly reviews, extracts behavioral patterns, builds daily direction, and proposes day replans.
+Adaptive Life Companion is one Go monolith that runs:
 
-Hard rule: calendar writes happen only after explicit Telegram callback confirmation.
+- Telegram long polling;
+- Google OAuth callback endpoint at `/oauth/google/callback`;
+- autonomy scheduler;
+- PostgreSQL repositories;
+- OpenAI and Google Calendar adapters.
 
-## Current Multi-User Status
+Calendar rule: the bot may propose changes, but it never writes to a calendar without explicit inline confirmation.
 
-Safe per-user data:
+## Environment
 
-- memories;
-- memory search;
-- daily reviews;
-- behavioral patterns;
-- daily directions;
-- replan proposals;
-- pending calendar action ownership.
-- Google Calendar OAuth connections.
-
-Current limitation:
-
-- Per-user Google Calendar OAuth is implemented through `/connect_calendar`.
-- Tokens are stored in Postgres in `user_integrations`; set `CALENDAR_TOKEN_ENCRYPTION_KEY` so stored OAuth tokens are encrypted.
-- The older global Google token fallback is still available only for `CALENDAR_OWNER_TELEGRAM_ID`.
-
-## Autonomy
-
-Autonomy is opt-in per Telegram user.
-
-Enable:
-
-```text
-/autonomy on
-```
-
-Disable:
-
-```text
-/autonomy off
-```
-
-Check status:
-
-```text
-/autonomy status
-```
-
-Tune schedule:
-
-```text
-/autonomy quiet 23:30 08:00
-/autonomy limit 5
-/autonomy time daily_review 22:30
-```
-
-Autonomy v1 sends:
-
-- morning daily direction;
-- midday check-in;
-- pattern-based nudge;
-- daily review reminder;
-- shutdown reminder;
-- weekly review.
-
-Each proactive notification has action buttons:
-
-- `Сделал`;
-- `Отложить 30м`;
-- `Отложить 2ч`;
-- `Пропустить`.
-
-Daily review reminders have `Ответить`. Midday check-ins can trigger a replan proposal.
-
-Important: autonomy can send messages and propose replans, but it does not apply calendar writes. Calendar changes still require explicit callback confirmation.
-
-## Local Setup
-
-Prerequisites:
-
-- Go 1.25;
-- Docker Desktop running;
-- Telegram bot token from BotFather;
-- OpenAI API key.
-
-Prepare env:
-
-```sh
-cp .env.example .env
-```
-
-Edit `.env`:
+Required:
 
 ```sh
 DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable
 OPENAI_API_KEY=sk-proj-...
 TELEGRAM_BOT_TOKEN=123:abc
 APP_TIMEZONE=Asia/Ho_Chi_Minh
+```
+
+Optional per-user Google Calendar OAuth:
+
+```sh
 GOOGLE_CALENDAR_ID=primary
+GOOGLE_CREDENTIALS_FILE=/absolute/path/client_secret_google_calendar.json
+GOOGLE_CREDENTIALS_JSON=
 GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
 CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
 HTTP_ADDR=:8080
 ```
 
-Start Postgres:
+Autonomy:
+
+```sh
+AUTONOMY_SCHEDULER_ENABLED=true
+AUTONOMY_DEFAULT_ENABLED=false
+```
+
+Migrations:
+
+```sh
+MIGRATIONS_SOURCE=file://migrations
+```
+
+Legacy private calendar fallback still exists through `GOOGLE_TOKEN_FILE` or `GOOGLE_TOKEN_JSON`, but public use should use per-user `/connect_calendar`.
+
+## Local Setup
+
+1. Copy env:
+
+```sh
+cp .env.example .env
+```
+
+2. Start Postgres:
 
 ```sh
 docker compose up -d postgres
 ```
 
-Run migrations:
+3. Run migrations:
 
 ```sh
 go run ./cmd/migrate up
 ```
 
-Check migration version:
-
-```sh
-go run ./cmd/migrate version
-```
-
-Run tests:
+4. Run tests:
 
 ```sh
 go test ./...
 ```
 
-Run bot:
+5. Start bot:
 
 ```sh
 go run ./cmd/bot
 ```
 
-## Google Calendar Locally
+## Google Calendar Local Setup
 
-Calendar is optional. Without it, memory, voice, review, patterns, `/today`, and replan proposal generation still work, but calendar reads/writes will be limited.
+Create a Google OAuth client in Google Cloud Console.
 
-Use a Google OAuth client configured with this authorized redirect URI:
+Authorized redirect URI:
 
 ```text
 http://localhost:8080/oauth/google/callback
@@ -152,35 +100,58 @@ CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
 HTTP_ADDR=:8080
 ```
 
-Start the bot and connect inside Telegram:
+Then in Telegram:
 
 ```text
 /connect_calendar
+/calendar_status
 ```
 
-Each user gets their own OAuth link and token. Calendar status:
+Disconnect:
 
 ```text
-/calendar_status
 /disconnect_calendar
 ```
 
-## Fly.io Setup
+## Commands
 
-Detailed Fly instructions are in `docs/deploy-fly.md`.
+User commands:
 
-Minimum flow:
+- `/start`
+- `/help`
+- `/today`
+- `/replan`
+- `/review`
+- `/weekly`
+- `/patterns`
+- `/autonomy`
+- `/connect_calendar`
+- `/calendar_status`
+- `/disconnect_calendar`
+- `/search <question>`
+- `/schedule`
+- `/capture`
+- `/settings`
 
-```sh
-fly auth login
-fly apps create <app-name>
-fly mpg create --name <db-name> --region sin --pgvector
-fly mpg attach <cluster-id> --app <app-name>
-fly secrets set --app <app-name> TELEGRAM_BOT_TOKEN='...' OPENAI_API_KEY='...'
-fly deploy --remote-only --app <app-name>
+Autonomy commands:
+
+```text
+/autonomy on
+/autonomy off
+/autonomy status
+/autonomy quiet 23:30 08:00
+/autonomy limit 5
+/autonomy time daily_review 22:30
 ```
 
-The deploy runs `./life-os-migrate up` automatically through Fly `release_command`.
+Notification kinds for `/autonomy time`:
+
+- `daily_direction`
+- `midday_checkin`
+- `pattern_nudge`
+- `daily_review`
+- `shutdown`
+- `weekly_review`
 
 ## Production Smoke Test
 
@@ -193,14 +164,16 @@ fly logs --app <app-name>
 In Telegram:
 
 1. Send `/start`.
-2. Send a short memory: `идея: проверить Adaptive Life OS`.
-3. Send `/search Adaptive Life OS`.
-4. Send `/review`, then answer the review questions.
-5. Send `/patterns`.
-6. Send `/today`.
-7. Send `/autonomy on`.
-8. Send: `я проспал до 11:40, перестрой день`.
-9. Confirm only if calendar action looks correct.
+2. Click Google Calendar connect button.
+3. Send `/calendar_status`.
+4. Send a memory: `идея: проверить Adaptive Life OS`.
+5. Send `/search Adaptive Life OS`.
+6. Send `/review`, then answer all five questions.
+7. Send `/patterns`.
+8. Send `/today`.
+9. Send `/autonomy on`.
+10. Send: `я проспал до 11:40, перестрой день`.
+11. Confirm calendar changes only if the proposal is correct.
 
 ## Operational Commands
 
@@ -208,6 +181,12 @@ Run migrations locally:
 
 ```sh
 go run ./cmd/migrate up
+```
+
+Check migration version locally:
+
+```sh
+go run ./cmd/migrate version
 ```
 
 Rollback one migration locally:
@@ -228,11 +207,30 @@ Check production migration version:
 fly ssh console --app <app-name> -C './life-os-migrate version'
 ```
 
+## Data Safety
+
+Per-user scoped data:
+
+- memories;
+- memory search;
+- daily reviews;
+- weekly review context;
+- behavioral patterns;
+- daily directions;
+- replan proposals;
+- calendar action ownership;
+- autonomy settings and notifications;
+- Google Calendar OAuth connections.
+
+Calendar writes require explicit inline confirmation.
+
+Set `CALENDAR_TOKEN_ENCRYPTION_KEY` before users connect calendars. Existing unencrypted tokens remain readable, but new tokens are stored encrypted.
+
 ## Common Failures
 
 `extension "vector" is not available`
 
-Your Postgres does not have pgvector. Locally use `pgvector/pgvector:pg16`. On Fly create Managed Postgres with `--pgvector`.
+Use `pgvector/pgvector:pg16` locally. On Fly, create Managed Postgres with `--pgvector`.
 
 `DATABASE_URL is required`
 
@@ -240,8 +238,16 @@ Set `.env` locally or attach Fly Postgres so Fly creates the `DATABASE_URL` secr
 
 `Календарь не настроен.`
 
-Google Calendar env vars are missing or invalid. For per-user OAuth, set Google credentials and `GOOGLE_OAUTH_REDIRECT_URL`, then run `/connect_calendar`.
+Google OAuth env vars are missing or the user has not connected a calendar. Set credentials and redirect URL, then run `/connect_calendar`.
+
+`calendar token is encrypted but CALENDAR_TOKEN_ENCRYPTION_KEY is not set`
+
+The token was saved encrypted and the runtime key is missing. Restore the same `CALENDAR_TOKEN_ENCRYPTION_KEY`.
 
 `Не распознал голос.`
 
 OpenAI audio transcription failed. Check `OPENAI_API_KEY`, network, and logs.
+
+`Не сохранил: ошибка памяти.`
+
+Postgres is unavailable or migrations were not applied.

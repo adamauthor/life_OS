@@ -1,15 +1,44 @@
 # Google Calendar Setup
 
-The bot supports per-user Google Calendar OAuth. Each Telegram user connects their own Google account with `/connect_calendar`.
+The bot supports per-user Google Calendar OAuth. Each Telegram user connects their own Google account with:
 
-Required environment variables:
+```text
+/connect_calendar
+```
 
-- `GOOGLE_CREDENTIALS_FILE`: OAuth client JSON downloaded from Google Cloud for local use.
-- `GOOGLE_CREDENTIALS_JSON`: same credentials as a JSON secret on Fly.
-- `GOOGLE_OAUTH_REDIRECT_URL`: callback URL.
-- `CALENDAR_TOKEN_ENCRYPTION_KEY`: long random secret used to encrypt stored OAuth tokens.
-- `GOOGLE_CALENDAR_ID`: calendar ID, usually `primary`.
-- `HTTP_ADDR`: local HTTP listener, usually `:8080`.
+Calendar reads and writes are then scoped to that Telegram user.
+
+## Required Env
+
+Local:
+
+```sh
+GOOGLE_CREDENTIALS_FILE=/absolute/path/client_secret_google_calendar.json
+GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
+CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
+GOOGLE_CALENDAR_ID=primary
+HTTP_ADDR=:8080
+```
+
+Fly:
+
+```sh
+GOOGLE_CREDENTIALS_JSON=<oauth-client-json>
+GOOGLE_OAUTH_REDIRECT_URL=https://<app-name>.fly.dev/oauth/google/callback
+CALENDAR_TOKEN_ENCRYPTION_KEY=<long-random-secret>
+GOOGLE_CALENDAR_ID=primary
+HTTP_ADDR=:8080
+```
+
+## Google Cloud Console
+
+Create OAuth credentials:
+
+1. Go to Google Cloud Console.
+2. Enable Google Calendar API.
+3. Create OAuth client.
+4. Use Web application type.
+5. Add redirect URI.
 
 Local redirect URI:
 
@@ -23,31 +52,58 @@ Fly redirect URI:
 https://<app-name>.fly.dev/oauth/google/callback
 ```
 
-Local env:
+Download the OAuth client JSON.
 
-```sh
-GOOGLE_CREDENTIALS_FILE=/absolute/path/client_secret_google_calendar.json
-GOOGLE_OAUTH_REDIRECT_URL=http://localhost:8080/oauth/google/callback
-CALENDAR_TOKEN_ENCRYPTION_KEY=change-me-long-random-secret
-HTTP_ADDR=:8080
-```
+## Telegram Flow
 
-Then in Telegram:
+Connect:
 
 ```text
 /connect_calendar
+```
+
+Check:
+
+```text
 /calendar_status
+```
+
+Disconnect:
+
+```text
 /disconnect_calendar
 ```
 
-The older single-token setup with `GOOGLE_TOKEN_JSON` or `GOOGLE_TOKEN_FILE` still exists for private/local fallback, but it is restricted to `CALENDAR_OWNER_TELEGRAM_ID`.
+`/start` also sends a calendar connect button when OAuth is configured.
 
-Calendar safety rules:
+## Storage
 
-- Event creation is stored first as a pending `calendar_actions` row.
-- Calendar reads/writes use the connected Telegram user's own Google token.
-- Telegram inline `Да` confirms the write.
-- `Нет` cancels the pending action.
-- Replanning produces a structured plan proposal.
-- Replanning mutates the calendar only after `Да`.
-- Events marked with `[fixed]`, `#fixed`, or `[фикс]` in title/description are treated as fixed and are not updated by replan.
+Tables:
+
+- `user_integrations`: stores per-user Google token and calendar ID.
+- `oauth_states`: stores temporary OAuth state during connection.
+
+When `CALENDAR_TOKEN_ENCRYPTION_KEY` is set, new stored tokens are encrypted with AES-GCM using a key derived from the secret.
+
+Keep the key stable. If the key changes, previously encrypted tokens cannot be decrypted.
+
+## Safety Rules
+
+- Calendar reads use the connected user's token.
+- Calendar writes require inline confirmation.
+- Replan actions are proposals until the user confirms.
+- Fixed events are not moved by replan.
+
+Fixed markers:
+
+```text
+[fixed]
+#fixed
+[фикс]
+```
+
+## Legacy Single-Token Mode
+
+`GOOGLE_TOKEN_FILE` and `GOOGLE_TOKEN_JSON` still exist for private/local fallback. If used, set `CALENDAR_OWNER_TELEGRAM_ID`; otherwise the runtime disables the shared calendar client to avoid exposing one calendar to every user.
+
+Public usage should use per-user `/connect_calendar`.

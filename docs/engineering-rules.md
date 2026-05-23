@@ -29,15 +29,19 @@ The application is one deployable Go service with clear internal modules. Do not
 Recommended package boundaries:
 
 - `cmd/bot`: executable entrypoint only.
+- `cmd/migrate`: migration runner.
 - `internal/app`: use cases, orchestration, Telegram update routing.
 - `internal/domain`: domain entities, value objects, domain rules.
 - `internal/storage`: PostgreSQL repositories and transactions.
 - `internal/telegram`: Telegram adapter.
 - `internal/ai`: OpenAI adapter and prompt contracts.
-- `internal/calendar`: Google Calendar adapter.
+- `internal/calendar`: Google Calendar adapter, OAuth service, callback server.
 - `internal/config`: configuration loading and validation.
+- `internal/planning`: daily direction and replan use cases.
 - `internal/review`: review flows.
-- `internal/profile`: profile, goals, rules, habits.
+- `internal/patterns`: behavioral pattern logic.
+- `internal/notifications`: autonomy scheduler and notification actions.
+- `internal/companion`: authority companion response formatting.
 
 Keep dependencies pointing inward:
 
@@ -65,7 +69,10 @@ Good aggregate candidates:
 - `Memory`
 - `CalendarAction`
 - `DailyReview`
-- `UserProfile`
+- `BehavioralPattern`
+- `ReplanProposal`
+- `ScheduledNotification`
+- `UserIntegration`
 - `Habit`
 
 Rules:
@@ -150,11 +157,24 @@ Avoid libraries that:
 ## Calendar Rules
 
 - Google Calendar writes must go through `CalendarAction`.
+- Google Calendar clients must resolve by `user_id` when per-user OAuth is configured.
+- Do not expose one global Google Calendar token to every Telegram user.
 - A proposal is stored before confirmation.
 - Confirmation applies exactly one pending action.
 - Fixed events are read-only unless the user explicitly asks to change them.
 - Replanning proposes changes first and applies them only after confirmation.
 - Calendar adapter should be replaceable later without rewriting scheduling logic.
+- Store OAuth tokens encrypted when `CALENDAR_TOKEN_ENCRYPTION_KEY` is configured.
+- Never log OAuth tokens, authorization codes, refresh tokens, or calendar event payloads containing private content.
+
+## Autonomy Rules
+
+- Autonomy must be opt-in unless the deploy owner explicitly changes default behavior.
+- Proactive messages must respect quiet hours.
+- Proactive messages must respect a daily cap.
+- Autonomy can ask, remind, nudge, and propose replans.
+- Autonomy must not apply calendar writes.
+- Every proactive notification should have an audit log and user action path.
 
 ## Testing Rules
 

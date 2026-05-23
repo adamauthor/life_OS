@@ -1,77 +1,80 @@
-# Deploy to Fly.io
+# Deploy To Fly.io
 
-This project runs Telegram long polling and exposes one small HTTP callback endpoint for Google OAuth:
+The app runs as one Go process on Fly:
 
-```text
-/oauth/google/callback
-```
+- Telegram long polling.
+- Google OAuth HTTP callback at `/oauth/google/callback`.
+- Autonomy scheduler.
+- Migration binary executed as Fly `release_command`.
 
 Sources:
+
 - Fly deploy from GitHub Actions: https://fly.io/docs/blueprints/deploy-with-github-actions/
 - Fly release command: https://fly.io/docs/reference/configuration/#the-deploy-section
 - Fly Managed Postgres: https://fly.io/docs/mpg/create-and-connect/
 - Fly Managed Postgres pgvector: https://fly.io/docs/mpg/overview/
 - golang-migrate: https://github.com/golang-migrate/migrate
 
-## 1. Prepare local machine
-
-Install:
+## 1. Install Tools
 
 ```sh
 brew install flyctl
 brew install go
-```
-
-Log in:
-
-```sh
 fly auth login
 ```
 
-Clone the repo and enter it:
+Clone repo:
 
 ```sh
 git clone <your-repo-url>
 cd life_OS
 ```
 
-## 2. Create Fly app
+## 2. Create App
 
-Edit `fly.toml` and replace:
-
-```toml
-app = "life-os-bot"
-```
-
-Use a globally unique name:
+Edit `fly.toml`:
 
 ```toml
 app = "your-life-os-bot"
 ```
 
-Create the app without deploying:
+Create app:
 
 ```sh
 fly apps create your-life-os-bot
 ```
 
-## 3. Create Fly Postgres
+## 3. Create Postgres
 
-Create a Managed Postgres cluster with pgvector enabled:
+Create Fly Managed Postgres with pgvector:
 
 ```sh
 fly mpg create --name your-life-os-db --region sin --pgvector
 ```
 
-Attach it to the bot app:
+Attach it:
 
 ```sh
 fly mpg attach <cluster-id-from-create-output> --app your-life-os-bot
 ```
 
-This sets `DATABASE_URL` as a Fly secret on the bot app.
+This sets `DATABASE_URL` on the app.
 
-## 4. Set secrets
+## 4. Configure Google OAuth
+
+In Google Cloud Console:
+
+1. Create OAuth client credentials.
+2. Use Web application client type.
+3. Add authorized redirect URI:
+
+```text
+https://your-life-os-bot.fly.dev/oauth/google/callback
+```
+
+Download OAuth client JSON as `client_secret_google_calendar.json`.
+
+## 5. Set Secrets
 
 Required:
 
@@ -81,7 +84,7 @@ fly secrets set --app your-life-os-bot \
   OPENAI_API_KEY='sk-proj-...'
 ```
 
-Optional Google Calendar via JSON secrets:
+Recommended for per-user Google Calendar:
 
 ```sh
 fly secrets set --app your-life-os-bot \
@@ -91,17 +94,9 @@ fly secrets set --app your-life-os-bot \
   CALENDAR_TOKEN_ENCRYPTION_KEY='paste-a-long-random-secret-here'
 ```
 
-In Google Cloud Console, add the same authorized redirect URI:
+Keep `CALENDAR_TOKEN_ENCRYPTION_KEY` stable. Existing encrypted tokens require the same key.
 
-```text
-https://your-life-os-bot.fly.dev/oauth/google/callback
-```
-
-After deploy, each Telegram user connects their own calendar with `/connect_calendar`.
-
-Local file env vars like `GOOGLE_CREDENTIALS_FILE` are for local development. On Fly use JSON secrets.
-
-## 5. Verify migrations locally
+## 6. Verify Locally
 
 Start local Postgres:
 
@@ -116,70 +111,81 @@ DATABASE_URL='postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable'
 go run ./cmd/migrate up
 ```
 
-Check version:
+Run tests:
 
 ```sh
-DATABASE_URL='postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable' \
-go run ./cmd/migrate version
+go test ./...
 ```
 
-## 6. First manual deploy
-
-Run:
+## 7. Deploy
 
 ```sh
 fly deploy --remote-only --app your-life-os-bot
 ```
 
-Fly will build the Docker image and run:
+Fly runs:
 
 ```sh
 ./life-os-migrate up
 ```
 
-as `release_command` before starting the new bot process. If migrations fail, Fly will not roll out the new version.
+as `release_command`. If migrations fail, Fly does not roll out the new version.
 
-## 7. GitHub Actions deploy
+## 8. GitHub Actions Deploy
 
-Create a Fly API token:
+Create Fly deploy token:
 
 ```sh
 fly tokens create deploy -x 999999h
 ```
 
-In GitHub repo settings:
+In GitHub `Settings -> Secrets and variables -> Actions`:
 
-1. Go to `Settings -> Secrets and variables -> Actions`.
-2. Add repository secret:
-   - `FLY_API_TOKEN=<token from fly tokens create>`
-3. Add repository variable:
-   - `FLY_DEPLOY_ENABLED=true`
+- secret: `FLY_API_TOKEN=<token>`
+- variable: `FLY_DEPLOY_ENABLED=true`
 
-Behavior:
+Workflow behavior:
 
-- `CI` runs tests and Docker build on PRs and pushes to `main`/`master`.
-- `Fly Deploy` can be started manually from the Actions tab.
+- `CI` runs `go test ./...` and Docker build.
+- `Fly Deploy` can be started manually.
 - Pushes to `main` deploy only when `FLY_DEPLOY_ENABLED=true`.
 
-## 8. Useful operations
+## 9. Smoke Test
 
-Check app logs:
+Watch logs:
 
 ```sh
 fly logs --app your-life-os-bot
 ```
 
-Run migration version inside a temporary Fly machine:
+In Telegram:
+
+1. `/start`
+2. `/connect_calendar`
+3. `/calendar_status`
+4. `/today`
+5. `завтра в 11 разобрать Kafka consumer groups`
+6. Confirm the event only if the proposal is correct.
+7. `/autonomy on`
+
+## 10. Useful Operations
+
+Check migration version:
 
 ```sh
 fly ssh console --app your-life-os-bot -C './life-os-migrate version'
 ```
 
-Rollback app release:
+Show releases:
 
 ```sh
 fly releases --app your-life-os-bot
+```
+
+Rollback app image:
+
+```sh
 fly deploy --image <previous-image> --app your-life-os-bot
 ```
 
-Do not run `down` in production unless you are intentionally rolling back schema and understand the data loss risk.
+Do not run migration `down` in production unless you intentionally roll back schema and understand data loss risk.

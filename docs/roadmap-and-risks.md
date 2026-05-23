@@ -1,107 +1,135 @@
 # Roadmap And Risks
 
-## Current Feature Status
+## Implemented
 
-Implemented:
+Core:
 
-- Telegram text input;
-- Telegram voice input;
-- memory capture;
-- intent classification;
-- PostgreSQL storage;
-- OpenAI parsing and summaries;
-- memory search;
-- daily review;
-- weekly review;
-- behavioral pattern extraction and confidence updates;
-- `/today` adaptive daily direction;
-- `/replan` proposal with confirmation callbacks;
-- Fly.io Docker deployment config;
-- GitHub Actions CI and Fly deploy workflow;
-- `golang-migrate` migrations;
-- per-user data isolation for core bot data;
-- per-user Google Calendar OAuth connections;
-- encrypted storage for new Google OAuth tokens when `CALENDAR_TOKEN_ENCRYPTION_KEY` is set.
-- opt-in autonomy scheduler;
-- proactive daily direction, check-ins, shutdown, review, weekly review, and pattern nudges;
-- snooze/done/skip callbacks for proactive notifications.
+- Telegram text input.
+- Telegram voice input.
+- Memory capture.
+- Intent classification.
+- PostgreSQL + pgvector.
+- OpenAI parsing, summaries, embeddings, and transcription.
+- Memory search.
+- `golang-migrate` migrations.
+- GitHub Actions CI.
+- Fly.io deployment config.
 
-## Critical Or Near-Critical Issues
+Adaptive Life OS:
 
-### 1. Token Key Management Is Still Basic
+- Daily direction through `/today`.
+- Adaptive replan through `/replan` and natural/voice intent.
+- Daily review through `/review`.
+- Weekly review through `/weekly`.
+- Behavioral patterns through `/patterns`.
+- Authority companion response style.
 
-Status: important before public launch.
+Multi-user:
 
-New per-user Google Calendar tokens can be encrypted with `CALENDAR_TOKEN_ENCRYPTION_KEY`, but key rotation and incident response are not implemented yet.
+- Per-user memories.
+- Per-user reviews.
+- Per-user patterns.
+- Per-user daily directions.
+- Per-user replan proposals.
+- Per-user calendar action ownership.
+- Per-user autonomy settings.
+- Per-user Google Calendar OAuth through `/connect_calendar`.
+
+Autonomy:
+
+- Opt-in scheduler.
+- Daily direction reminder.
+- Midday check-in.
+- Pattern nudge.
+- Daily review reminder.
+- Shutdown reminder.
+- Weekly review.
+- Done, snooze, skip, review, and replan callbacks.
+
+Calendar safety:
+
+- Calendar writes require explicit callback confirmation.
+- Replan proposals do not apply before confirmation.
+- Connected calendar is resolved by user.
+- New Google OAuth tokens can be encrypted with `CALENDAR_TOKEN_ENCRYPTION_KEY`.
+
+## Critical Risks
+
+### 1. No Public Access Policy
+
+Any Telegram user who finds the bot can consume OpenAI calls and database storage.
 
 Fix:
 
-- add key rotation with versioned token wrappers;
-- require `CALENDAR_TOKEN_ENCRYPTION_KEY` in production;
-- revoke Google tokens on disconnect when possible;
-- add an admin runbook for token incident response.
+- add `ALLOWED_TELEGRAM_USER_IDS` for private beta;
+- or add public mode with per-user rate limits;
+- log usage safely without private content;
+- cap message length and voice duration.
 
-### 2. No Access Policy Yet
+### 2. No Usage Cost Limits
 
-Status: important before public launch.
-
-Any Telegram user who finds the bot can use OpenAI calls and database storage.
-
-Fix options:
-
-- private beta allowlist: `ALLOWED_TELEGRAM_USER_IDS`;
-- public mode with rate limits;
-- usage logging and abuse controls.
-
-### 3. Autonomy Has A Daily Message Cap But No Cost Rate Limit
-
-Status: cost and abuse risk.
-
-Voice transcription, embeddings, and chat calls can generate cost.
-Autonomy has `max_messages_per_day`, but natural user-triggered AI calls are not rate-limited yet.
+User-triggered OpenAI calls are not rate-limited. Autonomy has a daily proactive message cap, but normal text, voice, search, reviews, and replans can still create cost.
 
 Fix:
 
-- per-user request limits;
-- daily voice duration limits;
+- daily per-user request counters;
+- voice duration limits;
 - max text length;
-- log usage per user.
+- model usage logging.
 
-### 4. No Webhook Mode
+### 3. Token Key Management Is Basic
 
-Status: operational improvement, not blocker.
+New per-user Google Calendar tokens can be encrypted, but key rotation is not implemented.
 
-The bot uses long polling. That is fine for a monolith worker on Fly, but webhook mode can reduce latency and simplify observability.
+Fix:
 
-Keep long polling for MVP unless there is a real scaling need.
+- require `CALENDAR_TOKEN_ENCRYPTION_KEY` in production;
+- add versioned token wrappers;
+- add rotation command or migration;
+- revoke Google tokens on disconnect where possible;
+- document incident response.
 
-### 5. Calendar Confirmation UX Needs Editing Flow
+### 4. Edit Flow Is Shallow
 
-Status: feature gap.
-
-`Изменить` currently asks the user to send corrected text, but does not keep a structured edit session.
+`Изменить` currently asks the user to send corrected text, but does not keep a structured edit session tied to the proposal.
 
 Fix:
 
 - store pending edit state;
-- link correction to proposal ID;
-- rebuild proposal from original + correction.
+- link correction to action/proposal ID;
+- rebuild proposal from original plus correction;
+- expire stale edit sessions.
 
-## Recommended Next Feature Order
+### 5. Limited Observability
 
-1. Add `ALLOWED_TELEGRAM_USER_IDS` for beta safety.
-2. Add per-user usage limits and message length limits.
-3. Add token key rotation and Google token revocation on disconnect.
-4. Improve `/replan` edit flow.
-5. Add production observability: structured user/action logs, basic metrics.
-6. Add integration tests for migrations against Postgres in CI.
+Logs are structured but there are no product metrics or dashboards.
 
-## Public Multi-User Definition
+Fix:
+
+- action counters;
+- error counters by provider;
+- notification delivery stats;
+- migration/version visibility;
+- privacy-safe user diagnostics.
+
+## Recommended Next Order
+
+1. Add beta allowlist or public rate limits.
+2. Add usage counters and max input limits.
+3. Improve calendar/replan edit sessions.
+4. Add token revocation and key rotation.
+5. Add production observability.
+6. Add migration integration tests in CI with Postgres.
+
+## Public Readiness Checklist
 
 The bot is public-ready only when:
 
-- user data is isolated;
-- OpenAI cost is rate-limited;
-- calendar integrations are per-user or calendar features are disabled for users without integration;
-- there is a basic abuse policy;
-- logs are sufficient to debug failures without exposing private memory content.
+- user data remains isolated;
+- OpenAI usage is rate-limited;
+- calendar tokens are encrypted in production;
+- Google token disconnect/revocation is handled;
+- abuse policy exists;
+- logs are sufficient for debugging without exposing memory content;
+- BotFather description and commands are up to date;
+- Fly secrets are configured and documented.

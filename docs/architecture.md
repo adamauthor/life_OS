@@ -1,129 +1,213 @@
-# Adaptive Life Companion MVP Architecture
+# Architecture
 
 ## Product Boundary
 
-MVP is a self-hosted Telegram bot. It captures text and voice, stores personal memory, proposes calendar actions, searches memory, and runs reviews. It never mutates calendar state or sends external messages without explicit user confirmation.
+Adaptive Life Companion is a self-hosted Telegram-first Adaptive Life OS MVP.
+
+It supports memory capture, voice input, semantic memory search, daily direction, adaptive replanning, reviews, behavioral patterns, autonomy reminders, and per-user Google Calendar integration.
+
+Hard constraints:
+
+- Go modular monolith.
+- No Web UI.
+- No mobile app.
+- No microservices.
+- No LangChain or agent framework.
+- No autonomous calendar writes.
+- Human override is mandatory.
 
 ## Runtime Shape
 
-Use one Go service for the MVP:
+The service is one Go process:
 
-- `cmd/bot`: process entrypoint.
-- `internal/app`: Telegram update routing and use-case orchestration.
-- `internal/domain`: domain entities, value objects, and invariant rules.
-- `internal/telegram`: Telegram Bot API client and transport types.
-- `internal/config`: environment configuration.
-- `internal/memory`: memory capture, summarization, embeddings, and search.
-- `internal/ai`: OpenAI clients for intent parsing, summaries, embeddings, and transcription.
-- `internal/calendar`: Google Calendar read/write adapter.
-- `internal/review`: daily, weekly, and monthly review flows.
-- `internal/profile`: user profile, rules, goals, and scheduling preferences.
-- `internal/storage`: PostgreSQL connection, repositories, and transactions.
-- `migrations`: SQL schema managed by `golang-migrate` up/down migrations.
+- Telegram long polling for bot updates.
+- HTTP callback endpoint only for Google OAuth: `/oauth/google/callback`.
+- Background autonomy scheduler in the same process.
+- PostgreSQL as source of truth.
+- Google Calendar reads/writes through per-user OAuth tokens.
+- OpenAI for intent parsing, transcription, summaries, embeddings, and memory answers.
 
-Keep it a modular monolith. Microservices, agent frameworks, and LangChain are explicitly out of scope.
+## Package Map
 
-Engineering rules for adding code and features are defined in `docs/engineering-rules.md`.
+- `cmd/bot`: composition root and process entrypoint.
+- `cmd/migrate`: `golang-migrate` runner.
+- `cmd/google-auth`: legacy local helper for single-token calendar setup.
+- `internal/app`: Telegram routing and application orchestration.
+- `internal/ai`: OpenAI adapter and prompt contracts.
+- `internal/calendar`: Google Calendar client, per-user OAuth service, and OAuth callback server.
+- `internal/companion`: authority companion response formatting.
+- `internal/config`: environment loading.
+- `internal/domain`: domain models and value types.
+- `internal/notifications`: autonomy scheduler and proactive notification logic.
+- `internal/patterns`: behavioral pattern extraction/update/query logic.
+- `internal/planning`: daily direction and replan services.
+- `internal/review`: daily and weekly review services.
+- `internal/storage`: PostgreSQL repositories.
+- `internal/telegram`: Telegram Bot API adapter.
+- `migrations`: `golang-migrate` up/down SQL migrations.
 
-## Data Flow
+## Core Flows
 
-### Text Capture
+### Text And Voice Intake
 
 1. Telegram update arrives.
-2. Bot logs raw input.
-3. Intent parser returns strict JSON.
-4. For memory capture, the service stores raw text, summary, tags, type, source, metadata, and embedding.
-5. Bot responds with a short confirmation and next step.
+2. User is registered/upserted by Telegram ID.
+3. Voice messages are downloaded and transcribed.
+4. Text goes through intent parsing.
+5. The bot routes to memory capture, calendar proposal, replan, review, weekly review, memory search, or fallback.
 
-### Voice Capture
+Commands are optional for normal use. Voice and natural text go through the same intent pipeline.
 
-1. Telegram voice update arrives.
-2. Bot downloads the file.
-3. OpenAI Whisper transcribes audio.
-4. Transcription goes through the same text intent pipeline.
+### Memory
 
-### Calendar Proposal
+1. Intent parser classifies memory type.
+2. AI summarizes and tags the raw text.
+3. Embedding is created.
+4. Memory is stored with `user_id`, source metadata, raw text, summary, tags, and vector.
+5. `/search` and `ask_memory` use vector search scoped to the same user.
 
-1. Intent parser detects `create_calendar_event` or `replan_day`.
-2. Service writes a pending row to `calendar_actions`.
-3. Bot shows the proposal with inline buttons.
-4. Only `Confirm` executes Google Calendar writes.
-5. Result is logged back to `calendar_actions`.
+### Per-User Calendar
 
-For `replan_day`, the AI returns a structured proposal. Fixed events are kept unchanged. Existing movable events are patched and new blocks are created only after confirmation.
+1. User sends `/connect_calendar`.
+2. Bot creates an OAuth state row in `oauth_states`.
+3. User opens the Google OAuth URL.
+4. Google redirects to `/oauth/google/callback`.
+5. Bot exchanges code for token and stores the token in `user_integrations`.
+6. Calendar reads and writes resolve a Google client by `user_id`.
 
-### Search
+If `CALENDAR_TOKEN_ENCRYPTION_KEY` is set, newly stored tokens are encrypted before saving.
 
-1. `/search` or `ask_memory` intent creates a query embedding.
-2. PostgreSQL orders memories by vector distance.
-3. The answer is generated from retrieved memory context.
+### Calendar Confirmation
 
-### Daily Review
+Calendar writes use pending records:
 
-1. `/review` prompts the review questions.
-2. User response is summarized by AI.
-3. Summary, mood, energy, wins, failures, and patterns are saved to `daily_reviews`.
-4. The review summary is also saved to `memories` as a `reflection`.
+- `calendar_actions` for standalone event proposals.
+- `replan_proposals` for adaptive replans.
 
-## Confirmation Model
+Flow:
 
-All risky actions use a pending action record:
+1. AI or parser proposes an action.
+2. Action is saved as pending.
+3. Bot shows inline buttons.
+4. Calendar mutation runs only on confirm callback.
+5. Status is updated to applied, cancelled, or failed.
 
-- `status=pending`: generated but not applied.
-- `status=confirmed`: user approved it.
-- `status=applied`: external system mutation succeeded.
-- `status=cancelled`: user rejected it.
-- `status=failed`: attempted but failed.
+Fixed events are not moved by replan. A Google Calendar event is treated as fixed if title or description contains:
 
-Calendar creation, update, deletion, and external messaging must go through this model.
+```text
+[fixed]
+#fixed
+[фикс]
+```
 
-## AI Contract
+### Daily Direction
 
-Intent extraction returns strict JSON only. The Go service validates:
+`/today` builds a direction, not a minute-by-minute schedule.
 
-- known `intent`;
-- known memory `type`;
-- confidence threshold;
-- `requires_confirmation=true` for calendar writes;
-- timezone-aware datetimes;
-- reasonable duration.
+Inputs:
 
-Low-confidence or invalid output becomes `unknown` and asks the user one direct clarification.
+- user profile fallback;
+- recent memories;
+- recent daily reviews;
+- behavioral patterns;
+- connected user calendar events.
 
-## PostgreSQL
+Output:
 
-Use PostgreSQL with `pgvector`.
+- 3 to 5 anchors;
+- 1 to 3 priorities;
+- no automatic calendar writes.
 
-Core tables:
+### Replan
 
+`/replan` and natural messages like `я проспал до 11:40, перестрой день` produce:
+
+- fixed events;
+- anchors;
+- flexible blocks;
+- recovery blocks;
+- optional blocks;
+- calendar actions only where important.
+
+The proposal is applied only after `replan_confirm:{proposal_id}`.
+
+### Reviews And Patterns
+
+Daily review:
+
+1. `/review` asks five questions.
+2. User answers in one message.
+3. Raw review is saved.
+4. AI summary, wins, failures, helped, harmed, tomorrow focus, and detected patterns are extracted.
+5. Behavioral pattern confidence is updated.
+6. Review summary is saved as memory.
+
+Weekly review analyzes the last 7 days of memories, reviews, patterns, habit logs, and calendar events.
+
+### Autonomy
+
+Autonomy is opt-in per user:
+
+```text
+/autonomy on
+```
+
+Scheduler behavior:
+
+- creates daily pending notifications from rules;
+- respects quiet hours;
+- enforces max proactive messages per day;
+- sends Telegram messages with done, snooze, skip, review, or replan callbacks;
+- never applies calendar writes without confirm.
+
+## Data Model
+
+Important tables:
+
+- `users`
 - `memories`
 - `calendar_actions`
+- `daily_directions`
 - `daily_reviews`
-- `user_profile`
+- `behavioral_patterns`
+- `replan_proposals`
 - `habits`
 - `habit_logs`
-
-Use repositories per aggregate. Keep SQL explicit.
+- `user_autonomy_settings`
+- `notification_rules`
+- `scheduled_notifications`
+- `notification_logs`
+- `user_integrations`
+- `oauth_states`
 
 ## Deployment
 
-Use Docker for local development and fly.io for deployment:
+Local:
 
-- app container with the Go bot;
-- PostgreSQL with pgvector;
-- secrets via environment variables;
-- long polling for MVP simplicity.
+- Docker Compose Postgres with pgvector.
+- `go run ./cmd/migrate up`.
+- `go run ./cmd/bot`.
 
-Webhook mode can be added later if needed.
+Production:
 
-## Milestone Order
+- Fly.io app.
+- Fly Managed Postgres with pgvector.
+- Dockerfile build.
+- Fly `release_command` runs migrations.
+- GitHub Actions runs tests and optional Fly deploy.
 
-1. Telegram skeleton: implemented.
-2. PostgreSQL and migrations: implemented.
-3. AI intent parser: implemented.
-4. Voice input: implemented.
-5. Calendar proposal: implemented.
-6. Calendar write after confirmation: implemented.
-7. Replan day: implemented with confirmation before applying calendar updates.
-8. Memory search: implemented.
-9. Daily review: implemented.
+## Non-Goals
+
+Not in this iteration:
+
+- Web UI;
+- mobile app;
+- Obsidian sync;
+- screen time tracking;
+- Apple Health;
+- multi-user SaaS billing;
+- payments;
+- social features;
+- agent swarm;
+- complex knowledge graph;
+- microservices.

@@ -1,104 +1,44 @@
 # User Guide
 
-Adaptive Life Companion is designed to be used mostly through normal text and voice messages. Commands exist for explicit actions, but daily use should not require command syntax.
+Adaptive Life Companion is designed for normal Telegram text and voice. Commands exist for explicit actions, but daily use should not require command syntax.
 
-## First Run
+## First Start
 
-1. Start PostgreSQL:
-
-```sh
-docker compose up -d postgres
-```
-
-2. Start the bot:
-
-```sh
-DATABASE_URL=postgres://life_os:life_os@localhost:5432/life_os?sslmode=disable \
-OPENAI_API_KEY=sk-proj-example \
-TELEGRAM_BOT_TOKEN=123:abc \
-APP_TIMEZONE=Asia/Ho_Chi_Minh \
-go run ./cmd/bot
-```
-
-3. Open Telegram and send:
+Send:
 
 ```text
 /start
 ```
 
-The bot should answer that it is enabled.
+The bot returns the basic guide and, when Google OAuth is configured, a button to connect Google Calendar.
 
-## Environment
+## Calendar Connection
 
-Required:
-
-- `DATABASE_URL`: PostgreSQL connection string.
-- `OPENAI_API_KEY`: OpenAI API key for intent parsing, Whisper, embeddings, and answers.
-- `TELEGRAM_BOT_TOKEN`: Telegram bot token from BotFather.
-- `APP_TIMEZONE`: user timezone, for example `Asia/Ho_Chi_Minh`.
-
-Optional Google Calendar:
-
-- `GOOGLE_CALENDAR_ID`: usually `primary`.
-- `GOOGLE_CREDENTIALS_FILE`: Google OAuth client JSON.
-- `GOOGLE_OAUTH_REDIRECT_URL`: OAuth callback URL.
-- `CALENDAR_TOKEN_ENCRYPTION_KEY`: secret for encrypting stored OAuth tokens.
-- `HTTP_ADDR`: callback listener, usually `:8080`.
-
-If Google Calendar is not configured, memory, voice transcription, search, review, patterns, `/today`, `/weekly`, and `/replan` can still work. With Google OAuth configured, each user connects their own calendar:
+Connect your own calendar:
 
 ```text
 /connect_calendar
+```
+
+Check status:
+
+```text
 /calendar_status
+```
+
+Disconnect:
+
+```text
 /disconnect_calendar
 ```
 
-## Autonomy
+The bot can read your calendar for `/today`, `/schedule`, and `/replan`. It writes only after you confirm an inline button.
 
-Autonomy is opt-in:
+## Natural Usage
 
-```text
-/autonomy on
-```
-
-Useful settings:
-
-```text
-/autonomy quiet 23:30 08:00
-/autonomy limit 5
-/autonomy time daily_review 22:30
-/autonomy status
-```
-
-The bot can send reminders, check-ins, review prompts, and replan proposals. It still cannot write to the calendar without inline confirmation.
-
-## Main Rule
-
-The bot can suggest, plan, warn, and prepare changes.
-
-The bot must not write to the calendar without your explicit confirmation through inline buttons.
-
-## Voice-First Usage
-
-Send a Telegram voice message naturally. No command is required.
+You can send text or voice.
 
 Examples:
-
-```text
-я проспал, сейчас 11:40, перестрой день
-```
-
-Expected flow:
-
-1. Bot downloads the voice message.
-2. Whisper transcribes it.
-3. LLM detects `replan_day`.
-4. Bot reads today calendar.
-5. Bot proposes a new plan.
-6. Bot shows `[Да] [Изменить] [Нет]`.
-7. Calendar changes happen only after `[Да]`.
-
-Other voice examples:
 
 ```text
 идея: сервис учета калорий как финансовый бюджет
@@ -109,65 +49,106 @@ Other voice examples:
 ```
 
 ```text
+я проспал, сейчас 11:40, перестрой день
+```
+
+```text
 что я говорил про AI Life OS
 ```
 
-## Text Capture
+Voice messages go through transcription and the same intent routing.
 
-Write thoughts directly:
+## Memory
+
+Send a thought, note, idea, task, or reflection:
 
 ```text
 идея: сделать сервис для учета калорий как финансовый бюджет
 ```
 
-The bot will:
+The bot saves:
 
-- classify the memory type;
-- save raw text;
-- create a summary;
-- assign tags;
-- create an embedding;
-- save it to PostgreSQL.
+- raw text;
+- summary;
+- type;
+- tags;
+- source metadata;
+- embedding for search.
 
-Supported memory types:
+Memory is scoped to your Telegram user.
 
-- `idea`
-- `task`
-- `note`
-- `reflection`
-- `event`
-- `question`
+## Search
+
+Command:
+
+```text
+/search что я говорил про AI Life OS
+```
+
+Natural question:
+
+```text
+что я говорил про AI Life OS
+```
+
+The bot searches only your own memories.
 
 ## Calendar Events
 
-Write naturally:
+Send:
 
 ```text
 завтра в 11 разобрать Kafka consumer groups
 ```
 
-The bot should answer with a proposed event:
+Expected behavior:
 
-```text
-Название: Разобрать Kafka consumer groups
-Дата/время: ...
-Длительность: 60 минут
-
-Добавить в календарь?
-[Да] [Изменить] [Нет]
-```
+1. Bot parses the event.
+2. Bot creates a pending calendar action.
+3. Bot shows inline buttons.
+4. Calendar event is created only after confirmation.
 
 Buttons:
 
-- `Да`: create/update calendar after confirmation.
-- `Изменить`: asks you to send corrected event text.
-- `Нет`: cancels the pending action.
+- `Да`: apply calendar write.
+- `Изменить`: asks for corrected event text.
+- `Нет`: cancel.
 
-## Fixed Events
+## Daily Direction
 
-For replanning, fixed events should not move.
+Send:
 
-Mark fixed events in Google Calendar title or description with one of:
+```text
+/today
+```
+
+The bot returns a direction, not a minute-by-minute schedule.
+
+Expected output:
+
+- 3 to 5 anchors;
+- 1 to 3 priorities;
+- no autonomous calendar writes;
+- calendar-aware if your calendar is connected.
+
+## Replan
+
+Send text or voice:
+
+```text
+я проснулся в 11:40, лег в 4 утра. перестрой день
+```
+
+The bot:
+
+- reads today's connected calendar events;
+- keeps fixed events;
+- creates a realistic plan;
+- separates fixed, anchor, flexible, recovery, and optional blocks;
+- proposes calendar actions;
+- applies calendar changes only after confirm.
+
+Mark fixed events in Google Calendar title or description:
 
 ```text
 [fixed]
@@ -175,132 +156,133 @@ Mark fixed events in Google Calendar title or description with one of:
 [фикс]
 ```
 
-Examples:
-
-```text
-[fixed] Doctor appointment
-```
-
-```text
-#fixed Team meeting
-```
-
-The bot will keep those events unchanged during replan.
-
-## Replan Day
-
-Send text or voice:
-
-```text
-я проснулся в 11:40, вчера лег в 4 утра. перестрой день
-```
-
-The bot will:
-
-- read today calendar;
-- keep fixed events;
-- produce a structured plan;
-- ask confirmation;
-- update movable events and create new blocks only after confirmation.
-
-## Search Memory
-
-Use command:
-
-```text
-/search что я говорил про идею AI Life OS
-```
-
-Or ask naturally:
-
-```text
-что я говорил про AI Life OS
-```
-
-The bot will search memory by embeddings and answer from relevant saved context.
-
 ## Daily Review
 
-Start with:
+Start:
 
 ```text
 /review
 ```
 
-The bot asks:
+Questions:
 
 ```text
 1. Что сделал?
 2. Что слил?
 3. Что помогло?
-4. Что завтра обязательно?
+4. Что ухудшило день?
+5. Что завтра обязательно?
 ```
 
-Reply in one message. The bot will:
+Reply in one message. The bot saves raw review, summary, extracted fields, and patterns.
 
-- summarize the review;
-- save it to `daily_reviews`;
-- save the summary to memory as `reflection`;
-- extract patterns.
+## Weekly Review
+
+Send:
+
+```text
+/weekly
+```
+
+The bot analyzes the last 7 days of memories, reviews, patterns, habit logs, and connected calendar events.
+
+## Patterns
+
+Send:
+
+```text
+/patterns
+```
+
+The bot lists active behavioral patterns with confidence.
+
+Example:
+
+```text
+1. isolation_after_work - confidence 0.82
+2. late_sleep_loop - confidence 0.76
+```
+
+## Autonomy
+
+Autonomy is opt-in:
+
+```text
+/autonomy on
+```
+
+Disable:
+
+```text
+/autonomy off
+```
+
+Status:
+
+```text
+/autonomy status
+```
+
+Settings:
+
+```text
+/autonomy quiet 23:30 08:00
+/autonomy limit 5
+/autonomy time daily_review 22:30
+```
+
+Autonomy can send:
+
+- morning daily direction;
+- midday check-in;
+- pattern nudge;
+- daily review reminder;
+- shutdown reminder;
+- weekly review.
+
+Notification buttons:
+
+- `Сделал`;
+- `Отложить 30м`;
+- `Отложить 2ч`;
+- `Пропустить`;
+- `Ответить` for review prompts;
+- `Перестроить` for replan prompts.
+
+Calendar writes still require explicit confirmation.
 
 ## Commands
 
-- `/start`: start bot.
-- `/help`: list commands.
+- `/start`: start guide and calendar connect prompt.
+- `/help`: commands and examples.
+- `/today`: adaptive daily direction.
+- `/replan`: day replan proposal.
+- `/review`: daily review.
+- `/weekly`: weekly review.
+- `/patterns`: active behavioral patterns.
+- `/autonomy`: autonomy settings.
+- `/connect_calendar`: connect Google Calendar.
+- `/calendar_status`: calendar connection status.
+- `/disconnect_calendar`: disconnect Google Calendar.
+- `/search <question>`: search memory.
+- `/schedule`: today's calendar events.
 - `/capture`: prompt for memory capture.
-- `/schedule`: show today calendar events.
-- `/replan`: explicitly request day replanning.
-- `/today`: show adaptive daily direction.
-- `/review`: start daily review.
-- `/weekly`: build weekly review.
-- `/patterns`: show active behavioral patterns.
-- `/search`: search memory.
-- `/settings`: show current settings guidance.
-
-## Practical Daily Flow
-
-Morning:
-
-```text
-что сегодня?
-```
-
-If late:
-
-```text
-я проспал, сейчас 11:40, перестрой день
-```
-
-During day:
-
-```text
-идея: ...
-```
-
-```text
-напомни что я думал про ...
-```
-
-Evening:
-
-```text
-/review
-```
+- `/settings`: settings guidance.
 
 ## Troubleshooting
 
 `Календарь не настроен.`
 
-Google Calendar OAuth is not configured or your account is not connected. Set `GOOGLE_CREDENTIALS_FILE` plus `GOOGLE_OAUTH_REDIRECT_URL`, then send `/connect_calendar`.
+OAuth is not configured or your account is not connected. Run `/connect_calendar`.
 
 `Не распознал голос. Повтори текстом.`
 
-Whisper request failed or audio could not be processed. Check `OPENAI_API_KEY` and network access.
+Transcription failed. Check `OPENAI_API_KEY`, network, and Telegram file access.
 
 `Не сохранил: ошибка памяти.`
 
-PostgreSQL is unavailable or migrations did not run. Start Docker Compose and check `DATABASE_URL`.
+PostgreSQL is unavailable or migrations did not run.
 
 `Не разобрал намерение.`
 
-The LLM intent parser failed. Send a shorter, more explicit message.
+The message was too ambiguous. Send a shorter, more explicit message.

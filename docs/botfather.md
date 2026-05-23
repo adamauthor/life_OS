@@ -24,7 +24,7 @@ life_os_companion_bot
 yourname_life_os_bot
 ```
 
-BotFather will return `TELEGRAM_BOT_TOKEN`. Put it into `.env` locally or Fly secrets in production.
+BotFather returns `TELEGRAM_BOT_TOKEN`. Store it in `.env` locally or Fly secrets in production.
 
 ## Commands
 
@@ -37,7 +37,7 @@ Send:
 Choose the bot, then paste:
 
 ```text
-start - Start the assistant
+start - Start and connect calendar
 help - Show commands and examples
 today - Build adaptive daily direction
 replan - Rebuild the day with confirmation
@@ -49,9 +49,9 @@ connect_calendar - Connect Google Calendar
 calendar_status - Show calendar connection status
 disconnect_calendar - Disconnect Google Calendar
 search - Search personal memory
-schedule - Show calendar events
+schedule - Show today's calendar events
 capture - Save a thought or note
-settings - Show current settings guidance
+settings - Show settings guidance
 ```
 
 ## Description
@@ -65,11 +65,11 @@ Send:
 Choose the bot, then paste:
 
 ```text
-Adaptive Life OS is a Telegram-first companion for memory, reflection, daily direction, and adaptive replanning.
+Adaptive Life OS is a Telegram-first companion for memory, reflection, behavioral patterns, daily direction, and adaptive replanning.
 
-Send text or voice. The bot classifies intent, saves useful memories, extracts behavioral patterns, and proposes realistic plans.
+Send text or voice. The bot saves useful memories, reviews the day, detects patterns, and proposes realistic plans.
 
-Calendar changes are never applied automatically. You must confirm them with a button.
+Each user can connect their own Google Calendar. Calendar changes are never applied automatically; you confirm them with a button.
 ```
 
 ## About Text
@@ -83,7 +83,7 @@ Send:
 Choose the bot, then paste:
 
 ```text
-Memory, reflection, daily direction, and adaptive replanning. Calendar writes only after confirmation.
+Memory, reviews, behavioral patterns, daily direction, and replanning. Calendar writes only after confirmation.
 ```
 
 ## Bot Picture
@@ -118,11 +118,11 @@ Choose:
 Enable
 ```
 
-That keeps group behavior limited. For this product, do not promote group usage until permissions and data boundaries are reviewed.
+That limits group behavior. Do not promote group usage until permissions, logging, and data boundaries are reviewed.
 
 ## Inline Mode
 
-Do not enable inline mode for now. The bot does not have an inline UX and memory data should stay private.
+Do not enable inline mode. The bot has no inline UX and memory data should stay private.
 
 ## Public Launch Copy
 
@@ -131,5 +131,5 @@ Short announcement:
 ```text
 Adaptive Life OS is a Telegram companion for memory, reviews, behavioral patterns, and realistic daily replanning.
 
-Send text or voice. It can propose calendar actions, but it never changes your calendar without confirmation.
+Send text or voice. Connect your own Google Calendar if you want calendar-aware planning. Calendar writes only happen after confirmation.
 ```
