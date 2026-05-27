@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
 
@@ -215,7 +214,7 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio io.Reade
 	filename, contentType := audioFileMetadata(filename)
 	result, err := c.openai.Audio.Transcriptions.New(ctx, openai.AudioTranscriptionNewParams{
 		File:           openai.File(audio, filename, contentType),
-		Model:          openai.AudioModelGPT4oMiniTranscribe,
+		Model:          openai.Wh,
 		Language:       openai.String("ru"),
 		Prompt:         openai.String("Транскрибируй только реальную русскую речь пользователя. Не добавляй субтитры, credits, имена редакторов, корректора, рекламу или текст, которого нет в аудио."),
 		Temperature:    openai.Float(0),
@@ -260,8 +259,10 @@ func audioFileMetadata(filename string) (string, string) {
 
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
-	case ".ogg", ".oga":
+	case ".ogg":
 		return filename, "audio/ogg"
+	case ".oga":
+		return strings.TrimSuffix(filename, filepath.Ext(filename)) + ".ogg", "audio/ogg"
 	case ".webm":
 		return filename, "audio/webm"
 	case ".mp3":

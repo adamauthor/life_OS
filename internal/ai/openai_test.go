@@ -11,7 +11,7 @@ func TestAudioFileMetadata(t *testing.T) {
 	}{
 		{name: "empty", filename: "", wantFilename: "voice.ogg", wantContentType: "audio/ogg"},
 		{name: "ogg", filename: "voice.ogg", wantFilename: "voice.ogg", wantContentType: "audio/ogg"},
-		{name: "oga", filename: "voice.oga", wantFilename: "voice.oga", wantContentType: "audio/ogg"},
+		{name: "oga renamed to ogg", filename: "voice.oga", wantFilename: "voice.ogg", wantContentType: "audio/ogg"},
 		{name: "webm", filename: "voice.webm", wantFilename: "voice.webm", wantContentType: "audio/webm"},
 		{name: "unknown", filename: "voice", wantFilename: "voice.ogg", wantContentType: "audio/ogg"},
 	}
