@@ -11,6 +11,7 @@ import (
 
 	"life_os/internal/ai"
 	"life_os/internal/app"
+	assistantpkg "life_os/internal/assistant"
 	"life_os/internal/calendar"
 	"life_os/internal/companion"
 	"life_os/internal/config"
@@ -52,6 +53,10 @@ func main() {
 	openAIClient := ai.NewClient(cfg.OpenAIAPIKey)
 	memoryRepository := storage.NewMemoryRepository(postgres.Pool)
 	memoryService := app.NewMemoryService(memoryRepository, openAIClient)
+	assistantRepository := storage.NewAssistantRepository(postgres.Pool)
+	userProfileService := assistantpkg.NewUserProfileService(assistantRepository)
+	knowledgeService := assistantpkg.NewKnowledgeService(assistantRepository, openAIClient)
+	anchorService := assistantpkg.NewAnchorService(assistantRepository)
 
 	calendarRepository := storage.NewCalendarActionRepository(postgres.Pool)
 	calendarService := app.NewCalendarService(calendarRepository, nil)
@@ -111,6 +116,15 @@ func main() {
 	bot.ConfigureAdaptiveServices(planningService, adaptiveReviewService, patternService, companionService)
 	bot.ConfigureNotificationService(notificationService)
 	bot.ConfigureCalendarConnector(calendarOAuth)
+	bot.ConfigureAssistantService(&assistantpkg.Service{
+		AI:          openAIClient,
+		Calendar:    calendarService,
+		Knowledge:   knowledgeService,
+		UserProfile: userProfileService,
+		Anchors:     anchorService,
+		Planning:    planningService,
+		Memory:      memoryService,
+	})
 
 	go notificationService.Run(ctx)
 	if calendarOAuth != nil {

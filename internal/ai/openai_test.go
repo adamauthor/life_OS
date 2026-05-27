@@ -28,3 +28,17 @@ func TestAudioFileMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestUnusableTranscriptionRejectsSubtitleHallucination(t *testing.T) {
+	text := "Редактор субтитров А.Семкин Корректор А.Егорова"
+	if !unusableTranscription(text) {
+		t.Fatal("subtitle hallucination should be rejected")
+	}
+}
+
+func TestUnusableTranscriptionAcceptsRealCommand(t *testing.T) {
+	text := "я проспал время сейчас 11:40 перестрой день"
+	if unusableTranscription(text) {
+		t.Fatal("real voice command should be accepted")
+	}
+}

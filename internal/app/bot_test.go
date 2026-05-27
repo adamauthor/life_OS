@@ -139,7 +139,7 @@ func TestRouteTextCommands(t *testing.T) {
 
 	tests := map[string]string{
 		"/start":    "Adaptive Life Companion включен.",
-		"/help":     "Команды:",
+		"/help":     "Просто говори",
 		"/capture":  "Пришли мысль",
 		"/schedule": "Календарь не настроен.",
 		"/today":    "Календарь не настроен.",

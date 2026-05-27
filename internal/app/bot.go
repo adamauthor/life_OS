@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"life_os/internal/assistant"
 	"life_os/internal/companion"
 	"life_os/internal/domain"
 	"life_os/internal/notifications"
@@ -41,6 +42,7 @@ type Bot struct {
 	patterns       *patterns.Service
 	companion      *companion.Service
 	notifications  *notifications.Service
+	assistant      *assistant.Service
 	ai             AIClient
 	timezone       *time.Location
 	pendingReviews map[int64]time.Time
@@ -85,6 +87,10 @@ func (b *Bot) ConfigureCalendarConnector(connector CalendarConnector) {
 		return
 	}
 	b.calendarOAuth = connector
+}
+
+func (b *Bot) ConfigureAssistantService(service *assistant.Service) {
+	b.assistant = service
 }
 
 func (b *Bot) hasCalendarConnector() bool {
@@ -173,6 +179,9 @@ func (b *Bot) routeText(ctx context.Context, msg *telegram.Message) string {
 	switch strings.Split(command[0], "@")[0] {
 	case "/start":
 		b.sendCalendarConnectPrompt(ctx, msg, false)
+		if b.assistant != nil && b.assistant.NeedsOnboarding(ctx, domain.UserIDFromTelegram(userID(msg))) {
+			return startText() + "\n\n" + assistant.OnboardingText()
+		}
 		return startText()
 	case "/help":
 		return helpText()
@@ -824,6 +833,25 @@ func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message
 		b.handleDailyReviewText(ctx, msg)
 		return
 	}
+	if b.assistant != nil {
+		loc := b.localLocation(ctx, msg)
+		response, err := b.assistant.HandleMessage(ctx, assistant.AssistantInput{
+			UserID:     domain.UserIDFromTelegram(userID(msg)),
+			TelegramID: userID(msg),
+			ChatID:     chatID(msg),
+			Text:       msg.Text,
+			Source:     source,
+			Now:        time.Now().In(loc),
+			Timezone:   loc.String(),
+		})
+		if err != nil {
+			b.logger.Error("failed to handle assistant message", "error", err)
+			_ = b.client.SendMessage(ctx, chatID(msg), "Не обработал запрос. Скажи короче.")
+			return
+		}
+		b.sendAssistantResponse(ctx, msg, response)
+		return
+	}
 	if b.ai == nil {
 		_ = b.client.SendMessage(ctx, chatID(msg), "AI client не настроен.")
 		return
@@ -869,6 +897,21 @@ func (b *Bot) handleNaturalTextSource(ctx context.Context, msg *telegram.Message
 	}
 }
 
+func (b *Bot) sendAssistantResponse(ctx context.Context, msg *telegram.Message, response *assistant.AssistantResponse) {
+	if response == nil || strings.TrimSpace(response.Text) == "" {
+		return
+	}
+	if len(response.Buttons) == 0 {
+		_ = b.client.SendMessage(ctx, chatID(msg), response.Text)
+		return
+	}
+	buttons := make([]telegram.InlineButton, 0, len(response.Buttons))
+	for _, button := range response.Buttons {
+		buttons = append(buttons, telegram.InlineButton{Text: button.Text, Data: button.Data, URL: button.URL})
+	}
+	_ = b.client.SendMessageWithButtons(ctx, chatID(msg), response.Text, buttons)
+}
+
 func (b *Bot) sendRecognitionNotice(ctx context.Context, msg *telegram.Message, source string, parsed domain.ParsedIntent) {
 	if source != "telegram_voice" {
 		return
@@ -906,49 +949,29 @@ func (b *Bot) now() string {
 
 func helpText() string {
 	return strings.Join([]string{
-		"Adaptive Life Companion",
+		"Просто говори или пиши.",
 		"",
-		"Можно писать обычным текстом или voice. Команды не обязательны.",
-		"После voice я показываю распознанный текст, категорию и следующий шаг.",
+		"Календарь:",
+		"- Что у меня сегодня?",
+		"- Запиши завтра в 15:00 созвон.",
+		"- Какие планы на неделю?",
 		"",
-		"Что умею распознавать:",
-		"- память: идеи, задачи, заметки, рефлексии",
-		"- событие календаря: предложу и спрошу подтверждение",
-		"- replan: перестрою день и спрошу подтверждение перед изменениями",
-		"- вопрос к памяти: найду по embeddings",
-		"- daily/weekly review: сохраню выводы и patterns",
+		"Память:",
+		"- Запомни: я должен Куанышу 4,5 млн донгов.",
+		"- Кому я должен деньги?",
+		"- Что я говорил про Life OS?",
 		"",
-		"Что не умею:",
-		"- не меняю календарь без кнопки подтверждения",
-		"- не отправляю внешние сообщения",
-		"- не трекаю Apple Health, Screen Time, Obsidian, Web UI",
-		"- не гарантирую идеальный разбор двусмысленного текста; если непонятно, скажи явно: идея, задача, событие, вопрос или replan",
+		"Обо мне:",
+		"- Моя цель на год — английский и тело.",
+		"- Я не люблю плавать по утрам.",
+		"- Мне помогают прогулки и горы.",
 		"",
-		"Примеры:",
-		"идея: сервис учета калорий как финансовый бюджет",
-		"завтра в 11 разобрать Kafka consumer groups",
-		"я проспал, сейчас 11:40, перестрой день",
-		"что я говорил про AI Life OS",
+		"День:",
+		"- Что мне делать сегодня?",
+		"- Я проспал, перестрой день.",
 		"",
-		"Команды:",
-		"/start - краткий user guide",
-		"/help - список команд и примеры",
-		"/capture - сохранить мысль, задачу, идею или заметку",
-		"/schedule - события календаря",
-		"/today - направление дня",
-		"/replan - перестроить день",
-		"/review - daily review",
-		"/weekly - weekly review",
-		"/patterns - active behavioral patterns",
-		"/autonomy - автономные напоминания",
-		"/connect_calendar - подключить Google Calendar",
-		"/calendar_status - статус календаря",
-		"/disconnect_calendar - отключить Google Calendar",
-		"/search <вопрос> - поиск по памяти",
-		"/settings - timezone и настройки профиля",
-		"/settings timezone Asia/Ho_Chi_Minh - сохранить локальное время",
-		"",
-		"Правило: календарь меняю только после подтверждения кнопкой.",
+		"Публичные команды: /start, /help, /connect_calendar, /today.",
+		"Календарь меняю только после подтверждения кнопкой.",
 	}, "\n")
 }
 
@@ -956,34 +979,20 @@ func startText() string {
 	return strings.Join([]string{
 		"Adaptive Life Companion включен.",
 		"",
-		"Как пользоваться:",
-		"1. Пиши или говори естественно. Команды не обязательны.",
-		"2. Я сам определю: память, задача, событие, поиск, review или replan.",
-		"3. После voice покажу распознанный текст, категорию и следующий шаг.",
-		"4. Календарь меняю только после твоего подтверждения.",
+		"Основной режим: voice или текст обычным языком.",
+		"Я сам определяю: календарь, память, профиль, долг, якорь, today или replan.",
+		"Календарь меняю только после кнопки подтверждения.",
 		"",
-		"Дисклеймер:",
-		"- Я не отправляю внешние сообщения.",
-		"- Я не меняю календарь без кнопки подтверждения.",
-		"- Если запрос двусмысленный, скажи явно: идея, задача, событие, вопрос, review или replan.",
+		"Попробуй:",
+		"- Что у меня сегодня?",
+		"- Запиши завтра в 15:00 созвон.",
+		"- Я должен Куанышу 4,5 млн донгов.",
+		"- Кому я должен?",
+		"- Моя цель на год — английский и senior Go.",
+		"- Я не люблю плавать, не предлагай.",
+		"- Что мне делать сегодня?",
 		"",
-		"Voice-first примеры:",
-		"- я проспал, сейчас 11:40, перестрой день",
-		"- завтра в 11 разобрать Kafka consumer groups",
-		"- идея: сервис учета калорий как финансовый бюджет",
-		"",
-		"Команды:",
-		"/help - полный список",
-		"/today - направление дня",
-		"/replan - перестроить день",
-		"/review - daily review",
-		"/weekly - weekly review",
-		"/patterns - behavioral patterns",
-		"/autonomy on - включить автономные напоминания",
-		"/connect_calendar - подключить личный Google Calendar",
-		"/search <вопрос> - поиск по памяти",
-		"/settings - timezone и настройки",
-		"/settings timezone Asia/Ho_Chi_Minh - сохранить локальное время",
+		"Команды: /help, /connect_calendar, /today.",
 		"",
 		"Следующий шаг: отправь мысль, задачу, событие или voice.",
 	}, "\n")

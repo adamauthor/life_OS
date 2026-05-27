@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/shared"
 
 	"life_os/internal/app"
+	"life_os/internal/assistant"
 	"life_os/internal/domain"
 )
 
@@ -27,6 +28,49 @@ func NewClient(apiKey string) *Client {
 		openai: openai.NewClient(option.WithAPIKey(apiKey)),
 		model:  shared.ChatModelGPT4_1Mini,
 	}
+}
+
+func (c *Client) ParseAssistantIntent(ctx context.Context, input assistant.IntentInput) (assistant.ParsedIntent, error) {
+	now := input.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	timezone := strings.TrimSpace(input.Timezone)
+	if timezone == "" {
+		timezone = now.Location().String()
+	}
+	prompt := fmt.Sprintf(`%s
+
+Current local time: %s
+Timezone: %s
+
+Known user facts JSON:
+%s
+
+Known anchor preferences JSON:
+%s
+
+Examples:
+"Что у меня завтра?" -> calendar_query range tomorrow
+"Запиши завтра в 15:00 созвон с Куанышем" -> calendar_create with start_time RFC3339
+"Я должен Куанышу 4,5 млн донгов, вернуть до конца месяца" -> knowledge_save type debt amount 4500000 currency VND due_date end of month
+"Кому я сейчас должен деньги?" -> knowledge_query type debt
+"Моя цель на год — английский и senior Go" -> user_profile_update category goals
+"Я не люблю плавать, не предлагай" -> anchor_feedback sea_swim disliked negative score
+"Сегодня поплавал, понравилось" -> anchor_feedback sea_swim liked positive score
+"Что мне делать сегодня?" -> today_direction
+
+User message:
+%s`, assistant.UnifiedIntentPrompt, now.Format(time.RFC3339), timezone, jsonForPrompt(input.Facts), jsonForPrompt(input.Anchors), input.Text)
+
+	var parsed assistant.ParsedIntent
+	if err := c.chatJSON(ctx, prompt, &parsed); err != nil {
+		return assistant.ParsedIntent{}, err
+	}
+	if !parsed.Intent.Valid() {
+		parsed.Intent = assistant.IntentUnknown
+	}
+	return parsed, nil
 }
 
 func (c *Client) ParseIntent(ctx context.Context, text string, nowRFC3339 string, timezone string) (domain.ParsedIntent, error) {
@@ -171,15 +215,42 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio io.Reade
 	filename, contentType := audioFileMetadata(filename)
 	result, err := c.openai.Audio.Transcriptions.New(ctx, openai.AudioTranscriptionNewParams{
 		File:           openai.File(audio, filename, contentType),
-		Model:          openai.AudioModelWhisper1,
+		Model:          openai.AudioModelGPT4oMiniTranscribe,
 		Language:       openai.String("ru"),
-		Prompt:         openai.String("Russian personal assistant notes, calendar events, daily planning, tasks, ideas."),
+		Prompt:         openai.String("Транскрибируй только реальную русскую речь пользователя. Не добавляй субтитры, credits, имена редакторов, корректора, рекламу или текст, которого нет в аудио."),
+		Temperature:    openai.Float(0),
+		Include:        []openai.TranscriptionInclude{openai.TranscriptionIncludeLogprobs},
 		ResponseFormat: openai.AudioResponseFormatJSON,
 	})
 	if err != nil {
 		return "", fmt.Errorf("openai transcription: %w", err)
 	}
-	return strings.TrimSpace(result.Text), nil
+	text := strings.TrimSpace(result.Text)
+	if unusableTranscription(text) {
+		return "", fmt.Errorf("openai transcription unusable: %q", text)
+	}
+	return text, nil
+}
+
+func unusableTranscription(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return true
+	}
+	knownHallucinations := []string{
+		"редактор субтитров",
+		"корректор",
+		"субтитры",
+		"продолжение следует",
+		"спасибо за просмотр",
+		"подписывайтесь",
+	}
+	for _, phrase := range knownHallucinations {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func audioFileMetadata(filename string) (string, string) {
